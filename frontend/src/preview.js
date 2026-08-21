@@ -374,11 +374,36 @@ function kindLabel(kind) {
   return kind.replace(/_/g, " ");
 }
 
-export function renderLayerToggles(container, layers, onToggle, onGroupToggle) {
+function summarizeDrillSizes(drills) {
+  const map = new Map();
+  for (const hit of drills || []) {
+    const dia = Number(hit.diameter);
+    const key = `${hit.tool}|${dia.toFixed(3)}`;
+    const prev = map.get(key) || {
+      tool: hit.tool || "T?",
+      diameter: dia,
+      count: 0,
+    };
+    prev.count += 1;
+    map.set(key, prev);
+  }
+  return [...map.values()].sort(
+    (a, b) => a.diameter - b.diameter || String(a.tool).localeCompare(String(b.tool))
+  );
+}
+
+export function renderLayerToggles(
+  container,
+  layers,
+  onToggle,
+  onGroupToggle,
+  drills = []
+) {
   container.innerHTML = "";
 
   const used = new Set();
   const groups = [];
+  const drillSizes = summarizeDrillSizes(drills);
 
   for (const def of LAYER_GROUPS) {
     const members = layers
@@ -388,7 +413,7 @@ export function renderLayerToggles(container, layers, onToggle, onGroupToggle) {
           (KIND_ORDER[a.kind] ?? 99) - (KIND_ORDER[b.kind] ?? 99) ||
           a.name.localeCompare(b.name)
       );
-    if (!members.length) continue;
+    if (!members.length && !(def.id === "drill" && drillSizes.length)) continue;
     members.forEach((m) => used.add(m.name));
     groups.push({ ...def, members });
   }
@@ -410,10 +435,13 @@ export function renderLayerToggles(container, layers, onToggle, onGroupToggle) {
     const groupCb = document.createElement("input");
     groupCb.type = "checkbox";
     groupCb.className = "group-toggle";
-    const allOn = group.members.every((m) => m.visible_default);
+    const allOn =
+      group.members.length > 0
+        ? group.members.every((m) => m.visible_default)
+        : true;
     const someOn = group.members.some((m) => m.visible_default);
     groupCb.checked = allOn;
-    groupCb.indeterminate = !allOn && someOn;
+    groupCb.indeterminate = group.members.length > 0 && !allOn && someOn;
     groupCb.title = `Toggle all ${group.title} layers`;
     groupCb.addEventListener("click", (e) => e.stopPropagation());
     groupCb.addEventListener("change", () => {
@@ -433,7 +461,10 @@ export function renderLayerToggles(container, layers, onToggle, onGroupToggle) {
     title.textContent = `${group.title}`;
     const count = document.createElement("span");
     count.className = "layer-group-count";
-    count.textContent = String(group.members.length);
+    count.textContent =
+      group.id === "drill" && drillSizes.length
+        ? String(drillSizes.reduce((n, t) => n + t.count, 0))
+        : String(group.members.length);
 
     summary.append(groupCb, title, count);
     details.append(summary);
@@ -450,7 +481,7 @@ export function renderLayerToggles(container, layers, onToggle, onGroupToggle) {
       cb.dataset.layer = layer.name;
       cb.addEventListener("change", () => {
         onToggle(layer.name, cb.checked);
-        const memberCbs = [...list.querySelectorAll('input[type="checkbox"]')];
+        const memberCbs = [...list.querySelectorAll('input[data-layer]')];
         const checked = memberCbs.filter((c) => c.checked).length;
         groupCb.checked = checked === memberCbs.length;
         groupCb.indeterminate = checked > 0 && checked < memberCbs.length;
@@ -468,6 +499,21 @@ export function renderLayerToggles(container, layers, onToggle, onGroupToggle) {
       label.append(cb, swatch, text);
       li.append(label);
       list.append(li);
+    }
+
+    if (group.id === "drill" && drillSizes.length) {
+      const sizes = document.createElement("ul");
+      sizes.className = "drill-sizes";
+      sizes.setAttribute("aria-label", "Drill sizes");
+      for (const tool of drillSizes) {
+        const li = document.createElement("li");
+        li.innerHTML =
+          `<span class="tool">${tool.tool}</span>` +
+          `<span class="size">Ø ${tool.diameter.toFixed(3)} mm</span>` +
+          `<span class="hits">×${tool.count}</span>`;
+        sizes.append(li);
+      }
+      list.append(sizes);
     }
 
     details.append(list);

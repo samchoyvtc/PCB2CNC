@@ -207,9 +207,32 @@
       margin: 0;
       padding: 0;
       list-style: none;
-      max-height: 340px;
-      overflow: auto;
     }
+    .side-tabs {
+      display: flex;
+      gap: 0.35rem;
+      margin-bottom: 0.85rem;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 0.55rem;
+    }
+    .side-tab {
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 8px;
+      padding: 0.4rem 0.75rem;
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .side-tab.active {
+      color: #1a1205;
+      background: linear-gradient(180deg, #ffb84a, var(--accent));
+      border-color: #e09410;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
     .layer-group {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -249,6 +272,32 @@
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
+    }
+    .drill-sizes {
+      list-style: none;
+      margin: 0.35rem 0 0.15rem;
+      padding: 0.45rem 0.5rem;
+      border-top: 1px dashed rgba(42, 54, 80, 0.9);
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .drill-sizes li {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .drill-sizes .tool {
+      color: #fca5a5;
+    }
+    .drill-sizes .size {
+      color: var(--text);
+    }
+    .drill-sizes .hits {
+      color: var(--accent2);
     }
     #layer-toggles label {
       display: flex;
@@ -353,36 +402,44 @@
     </section>
 
     <aside class="panel">
-      <h2>Layers</h2>
-      <ul id="layer-toggles"></ul>
+      <div class="side-tabs" role="tablist" aria-label="Side panel">
+        <button type="button" class="side-tab active" id="tab-layers" data-tab="layers" role="tab" aria-selected="true">Layers</button>
+        <button type="button" class="side-tab" id="tab-machine" data-tab="machine" role="tab" aria-selected="false">Machine</button>
+      </div>
 
-      <h2 style="margin-top:1.25rem">Machine</h2>
-      <form id="settings-form">
-        <div class="field">
-          <label for="engraving_depth_mm">Engrave depth (mm)</label>
-          <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
-        </div>
-        <div class="field">
-          <label for="feed_mm_min">Feed (mm/min)</label>
-          <input id="feed_mm_min" name="feed_mm_min" type="number" step="10" value="2000" />
-        </div>
-        <div class="field">
-          <label for="spindle_rpm">Spindle RPM</label>
-          <input id="spindle_rpm" name="spindle_rpm" type="number" step="100" value="12000" />
-        </div>
-        <div class="field">
-          <label for="safe_z_mm">Safe Z (mm)</label>
-          <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
-        </div>
-        <div class="field">
-          <label for="stock_thickness_mm">Stock thickness (mm)</label>
-          <input id="stock_thickness_mm" name="stock_thickness_mm" type="number" step="0.1" value="1.5" />
-        </div>
-      </form>
+      <div class="tab-panel active" id="panel-layers" role="tabpanel">
+        <div id="layer-toggles"></div>
+      </div>
 
-      <h2 style="margin-top:1.25rem">Output</h2>
-      <ul id="downloads"></ul>
-      <img id="toolpath-preview" alt="Toolpath verification preview" />
+      <div class="tab-panel" id="panel-machine" role="tabpanel" hidden>
+        <h2>Machine</h2>
+        <form id="settings-form">
+          <div class="field">
+            <label for="engraving_depth_mm">Engrave depth (mm)</label>
+            <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
+          </div>
+          <div class="field">
+            <label for="feed_mm_min">Feed (mm/min)</label>
+            <input id="feed_mm_min" name="feed_mm_min" type="number" step="10" value="2000" />
+          </div>
+          <div class="field">
+            <label for="spindle_rpm">Spindle RPM</label>
+            <input id="spindle_rpm" name="spindle_rpm" type="number" step="100" value="12000" />
+          </div>
+          <div class="field">
+            <label for="safe_z_mm">Safe Z (mm)</label>
+            <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
+          </div>
+          <div class="field">
+            <label for="stock_thickness_mm">Stock thickness (mm)</label>
+            <input id="stock_thickness_mm" name="stock_thickness_mm" type="number" step="0.1" value="1.5" />
+          </div>
+        </form>
+
+        <h2 style="margin-top:1.25rem">Output</h2>
+        <ul id="downloads"></ul>
+        <img id="toolpath-preview" alt="Toolpath verification preview" />
+      </div>
     </aside>
   </main>
 

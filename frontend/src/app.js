@@ -10,6 +10,10 @@ const downloadsEl = document.getElementById("downloads");
 const toolpathImg = document.getElementById("toolpath-preview");
 const btnGenerate = document.getElementById("btn-generate");
 const settingsForm = document.getElementById("settings-form");
+const tabLayers = document.getElementById("tab-layers");
+const tabMachine = document.getElementById("tab-machine");
+const panelLayers = document.getElementById("panel-layers");
+const panelMachine = document.getElementById("panel-machine");
 
 const pills = {
   1: document.getElementById("pill-1"),
@@ -31,6 +35,18 @@ function setStage(n) {
   });
 }
 
+function setSideTab(tab) {
+  const isLayers = tab === "layers";
+  tabLayers.classList.toggle("active", isLayers);
+  tabMachine.classList.toggle("active", !isLayers);
+  tabLayers.setAttribute("aria-selected", String(isLayers));
+  tabMachine.setAttribute("aria-selected", String(!isLayers));
+  panelLayers.classList.toggle("active", isLayers);
+  panelMachine.classList.toggle("active", !isLayers);
+  panelLayers.hidden = !isLayers;
+  panelMachine.hidden = isLayers;
+}
+
 function renderFiles(files) {
   fileListEl.innerHTML = "";
   for (const f of files) {
@@ -50,7 +66,8 @@ async function loadPreview(id) {
     layerTogglesEl,
     data.layers,
     (name, visible) => board.setVisible(name, visible),
-    (names, visible) => board.setGroupVisible(names, visible)
+    (names, visible) => board.setGroupVisible(names, visible),
+    data.drills || []
   );
   if (data.warnings && data.warnings.length) {
     setStatus(data.warnings.join(" · "), "error");
@@ -58,6 +75,7 @@ async function loadPreview(id) {
     setStatus(`Preview ready · ${data.layers.length} layers · ${data.drills.length} drills`, "ok");
   }
   setStage(1);
+  setSideTab("layers");
   btnGenerate.disabled = false;
 }
 
@@ -86,6 +104,9 @@ setupDropzone({
   setStatus,
 });
 
+tabLayers.addEventListener("click", () => setSideTab("layers"));
+tabMachine.addEventListener("click", () => setSideTab("machine"));
+
 document.getElementById("btn-fit").addEventListener("click", () => board.fit());
 document.getElementById("btn-zoom-in").addEventListener("click", () => board.zoom(1.2));
 document.getElementById("btn-zoom-out").addEventListener("click", () => board.zoom(1 / 1.2));
@@ -102,6 +123,7 @@ btnGenerate.addEventListener("click", async () => {
     showToolpathPreview(toolpathImg, result.toolpath_preview_png_base64);
     setStatus(result.message, "ok");
     setStage(3);
+    setSideTab("machine");
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
