@@ -11,6 +11,8 @@ const downloadsEl = document.getElementById("downloads");
 const toolpathImg = document.getElementById("toolpath-preview");
 const btnGenerate = document.getElementById("btn-generate");
 const btnGenerateMachine = document.getElementById("btn-generate-machine");
+const btnReset = document.getElementById("btn-reset");
+const fileInput = document.getElementById("file-input");
 const settingsForm = document.getElementById("settings-form");
 const tabLayers = document.getElementById("tab-layers");
 const tabMachine = document.getElementById("tab-machine");
@@ -38,6 +40,27 @@ function setGenerateEnabled(enabled) {
   btnGenerateMachine.disabled = !enabled;
 }
 
+function setResetEnabled(enabled) {
+  btnReset.disabled = !enabled;
+}
+
+function resetJob() {
+  jobId = null;
+  currentStage = 1;
+  fileInput.value = "";
+  fileListEl.innerHTML = "";
+  layerTogglesEl.innerHTML = "";
+  downloadsEl.innerHTML = "";
+  showToolpathPreview(toolpathImg, null);
+  renderBomTable(bomPanelEl, [], null);
+  board.clear();
+  setGenerateEnabled(false);
+  setResetEnabled(false);
+  setStage(1);
+  showPanel("layers");
+  setStatus("Ready for a new zip…");
+}
+
 function setStage(n) {
   currentStage = n;
   Object.entries(pills).forEach(([k, el]) => {
@@ -47,7 +70,7 @@ function setStage(n) {
   });
 }
 
-function setSideTab(tab, { bumpStage = true } = {}) {
+function showPanel(tab) {
   const isLayers = tab === "layers";
   tabLayers.classList.toggle("active", isLayers);
   tabMachine.classList.toggle("active", !isLayers);
@@ -57,15 +80,26 @@ function setSideTab(tab, { bumpStage = true } = {}) {
   panelMachine.classList.toggle("active", !isLayers);
   panelLayers.hidden = !isLayers;
   panelMachine.hidden = isLayers;
+}
 
-  if (!bumpStage || !jobId) return;
-  if (isLayers) {
-    setStage(Math.max(currentStage, 1) === 1 ? 1 : Math.min(currentStage, 1) || 1);
-    // Stay on preview unless already further along — don't regress past convert
-    if (currentStage < 2) setStage(1);
-  } else if (currentStage < 3) {
-    setStage(2);
+function goPreview() {
+  if (!jobId) {
+    setStatus("Upload a Gerber zip to start Stage 1 Preview", "error");
+    return;
   }
+  showPanel("layers");
+  setStage(Math.max(currentStage, 1) === 1 ? 1 : currentStage < 2 ? 1 : currentStage);
+  // Viewing preview: if not yet past machine, mark stage 1
+  if (currentStage < 2) setStage(1);
+}
+
+function goMachine() {
+  if (!jobId) {
+    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    return;
+  }
+  showPanel("machine");
+  if (currentStage < 3) setStage(2);
 }
 
 function renderFiles(files) {
@@ -102,8 +136,9 @@ async function loadPreview(id) {
     );
   }
   setStage(1);
-  setSideTab("layers", { bumpStage: false });
+  showPanel("layers");
   setGenerateEnabled(true);
+  btnReset.disabled = false;
 }
 
 async function onZip(file) {
@@ -128,7 +163,7 @@ async function onZip(file) {
 async function runGenerate() {
   if (!jobId) return;
   try {
-    setSideTab("machine", { bumpStage: false });
+    showPanel("machine");
     setStage(3);
     setStatus("Stage 3 · Generating CNC G-code…");
     setGenerateEnabled(false);
@@ -154,44 +189,23 @@ setupDropzone({
   setStatus,
 });
 
-tabLayers.addEventListener("click", () => setSideTab("layers"));
-tabMachine.addEventListener("click", () => {
-  if (!jobId) {
-    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
-    return;
-  }
-  setSideTab("machine");
-});
-
-pills[1].addEventListener("click", () => {
-  if (!jobId) return;
-  setSideTab("layers");
-  setStage(Math.max(1, Math.min(currentStage, 1)) || 1);
-  if (currentStage > 1) setStage(currentStage); // keep progress highlight via active<=n
-  setStage(Math.max(currentStage, 1));
-  setSideTab("layers", { bumpStage: false });
-  if (currentStage < 2) setStage(1);
-});
-
-pills[2].addEventListener("click", () => {
-  if (!jobId) {
-    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
-    return;
-  }
-  setSideTab("machine");
-});
-
+tabLayers.addEventListener("click", goPreview);
+tabMachine.addEventListener("click", goMachine);
+pills[1].addEventListener("click", goPreview);
+pills[2].addEventListener("click", goMachine);
 pills[3].addEventListener("click", () => {
   if (!jobId) return;
-  setSideTab("machine", { bumpStage: false });
   runGenerate();
 });
-
 pills[4].addEventListener("click", () => {
   if (!jobId) return;
-  setSideTab("machine", { bumpStage: false });
-  if (currentStage >= 4) setStage(4);
-  else setStatus("Generate G-code first (Stage 3)", "error");
+  showPanel("machine");
+  if (currentStage >= 4) {
+    setStage(4);
+    setStatus("Stage 4 · Download converted .nc files below", "ok");
+  } else {
+    setStatus("Run Stage 3 Generate first", "error");
+  }
 });
 
 document.getElementById("btn-fit").addEventListener("click", () => board.fit());
@@ -199,8 +213,11 @@ document.getElementById("btn-zoom-in").addEventListener("click", () => board.zoo
 document.getElementById("btn-zoom-out").addEventListener("click", () => board.zoom(1 / 1.2));
 
 btnGenerate.addEventListener("click", () => {
-  setSideTab("machine", { bumpStage: false });
-  setStage(2);
+  goMachine();
   runGenerate();
 });
 btnGenerateMachine.addEventListener("click", runGenerate);
+btnReset.addEventListener("click", () => {
+  resetJob();
+  fileInput.click();
+});

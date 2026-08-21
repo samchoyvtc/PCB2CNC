@@ -159,6 +159,18 @@ export class BoardPreview {
     this.fit();
   }
 
+  clear() {
+    this.layers = [];
+    this.drills = [];
+    this.bounds = null;
+    this.visibility = {};
+    this._images = {};
+    this.scale = 1;
+    this.offsetX = 0;
+    this.offsetY = 0;
+    this.draw();
+  }
+
   setVisible(name, visible) {
     this.visibility[name] = visible;
     this.draw();

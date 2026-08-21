@@ -136,6 +136,14 @@
     }
     #dropzone strong { color: var(--accent); display: block; margin-bottom: 0.35rem; }
     #dropzone span { color: var(--muted); font-size: 0.85rem; }
+    .input-actions {
+      margin-top: 0.65rem;
+      display: flex;
+      gap: 0.5rem;
+    }
+    .input-actions button {
+      flex: 1;
+    }
     #file-list {
       list-style: none;
       margin: 0.9rem 0 0;
@@ -422,6 +430,9 @@
         <strong>Drop CAM zip here</strong>
         <span>or click to choose · Gerber + Excellon</span>
         <input id="file-input" type="file" accept=".zip,application/zip" hidden />
+      </div>
+      <div class="input-actions">
+        <button type="button" id="btn-reset" disabled title="Clear current job and upload another zip">Reset</button>
       </div>
       <ul id="file-list"></ul>
       <div class="status" id="status">Waiting for zip…</div>
