@@ -28,7 +28,7 @@ def test_classify_names():
     assert zip_ingest.classify_filename("copper_top.gbr") == "copper_top"
     assert zip_ingest.classify_filename("profile.gbr") == "profile"
     assert zip_ingest.classify_filename("drill_1_64.xln") == "drill"
-    assert zip_ingest.classify_filename("PCB v2.txt") == "bom"
+    assert zip_ingest.classify_filename("PCB v2.txt") is None
     assert zip_ingest.classify_filename("._copper_top.gbr") is None
     assert zip_ingest.classify_filename(".DS_Store") is None
     assert zip_ingest.is_junk_cam_path(Path("__MACOSX/._copper_top.gbr"))
@@ -36,7 +36,7 @@ def test_classify_names():
         zip_ingest.classify_cam_path(
             Path("CAMOutputs/Assembly/PCB v2.txt")
         )
-        == "bom"
+        is None
     )
 
 
@@ -90,7 +90,7 @@ def test_upload_preview_generate(sample_zip_bytes: bytes):
     kinds = {f["kind"] for f in files}
     assert "copper_top" in kinds
     assert "drill" in kinds
-    assert "bom" in kinds
+    assert "bom" not in kinds
     assert not any(f["kind"] == "drill" and f["name"].endswith(".txt") for f in files)
 
     prev = client.get(f"/api/jobs/{job_id}/preview")
@@ -100,7 +100,6 @@ def test_upload_preview_generate(sample_zip_bytes: bytes):
     assert body["bounds"]["width"] > 0
     assert any(l["kind"] == "copper_top" and l["image_png_base64"] for l in body["layers"])
     assert len(body["drills"]) == 4
-    assert len(body["bom"]) == 3
     drill_layer = next(l for l in body["layers"] if l["kind"] == "drill")
     assert drill_layer["drill_tools"]
     assert drill_layer["drill_tools"][0]["diameter"] == pytest.approx(1.0, abs=0.01)

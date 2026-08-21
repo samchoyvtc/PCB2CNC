@@ -1,12 +1,11 @@
 import { setupDropzone, uploadZip } from "./upload.js";
-import { BoardPreview, renderLayerToggles, renderBomTable } from "./preview.js";
+import { BoardPreview, renderLayerToggles } from "./preview.js";
 import { readSettings } from "./settings.js";
 import { generateJob, renderDownloads, showToolpathPreview } from "./output.js";
 
 const statusEl = document.getElementById("status");
 const fileListEl = document.getElementById("file-list");
 const layerTogglesEl = document.getElementById("layer-toggles");
-const bomPanelEl = document.getElementById("bom-panel");
 const downloadsEl = document.getElementById("downloads");
 const toolpathImg = document.getElementById("toolpath-preview");
 const btnNext = document.getElementById("btn-next");
@@ -72,7 +71,6 @@ function resetJob() {
   layerTogglesEl.innerHTML = "";
   downloadsEl.innerHTML = "";
   showToolpathPreview(toolpathImg, null);
-  renderBomTable(bomPanelEl, [], null);
   board.clear();
   setResetEnabled(false);
   setProgress(false);
@@ -173,14 +171,11 @@ async function loadPreview(id) {
     (names, visible) => board.setGroupVisible(names, visible),
     data.drills || []
   );
-  renderBomTable(bomPanelEl, data.bom || [], data.bom_source);
   if (data.warnings && data.warnings.length) {
     setStatus(data.warnings.join(" · "), "error");
   } else {
-    const bomN = (data.bom || []).length;
     setStatus(
-      `Stage 1 Preview ready · ${data.layers.length} layers · ${data.drills.length} drills` +
-        (bomN ? ` · ${bomN} BOM parts` : ""),
+      `Stage 1 Preview ready · ${data.layers.length} layers · ${data.drills.length} drills`,
       "ok"
     );
   }
@@ -199,7 +194,6 @@ async function onZip(file) {
     updateNextButton();
     downloadsEl.innerHTML = "";
     showToolpathPreview(toolpathImg, null);
-    renderBomTable(bomPanelEl, [], null);
     setProgress(true, 5, "Uploading zip…", "5%");
     const uploaded = await uploadZip(file);
     jobId = uploaded.job_id;

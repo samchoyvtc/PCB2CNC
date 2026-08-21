@@ -61,11 +61,11 @@ def classify_cam_path(path: Path) -> str | None:
     if "pnp_" in lower:
         return None
 
-    # Assembly part list / BOM (e.g. PCB v2.txt) — never treat as drill
+    # Assembly part list / BOM (e.g. PCB v2.txt) — ignored in UI
     if lower.endswith(".txt"):
         in_assembly = "assembly" in parts
         if in_assembly or _looks_like_bom(path):
-            return "bom"
+            return None
         if "drill" in lower:
             return "drill"
         return None
@@ -87,12 +87,12 @@ def classify_filename(name: str) -> str | None:
     if "pnp_" in lower:
         return None
 
-    # BOM filenames often look like "PCB v2.txt" — not drill
+    # BOM filenames often look like "PCB v2.txt" — ignored
     if lower.endswith(".txt"):
         if "drill" in stem:
             return "drill"
         if "partlist" in stem or stem.startswith("pcb"):
-            return "bom"
+            return None
         return None
 
     if ext in DRILL_EXTS or stem.startswith("drill") or re.search(r"(^|[_-])drill([_-]|$)", stem):
