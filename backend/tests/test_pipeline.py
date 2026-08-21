@@ -28,6 +28,32 @@ def test_classify_names():
     assert zip_ingest.classify_filename("copper_top.gbr") == "copper_top"
     assert zip_ingest.classify_filename("profile.gbr") == "profile"
     assert zip_ingest.classify_filename("drill_1_64.xln") == "drill"
+    assert zip_ingest.classify_filename("._copper_top.gbr") is None
+    assert zip_ingest.classify_filename(".DS_Store") is None
+    assert zip_ingest.is_junk_cam_path(Path("__MACOSX/._copper_top.gbr"))
+
+
+def test_skip_appledouble_in_zip(tmp_path: Path, sample_zip_bytes: bytes):
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        with zipfile.ZipFile(io.BytesIO(sample_zip_bytes)) as src:
+            for info in src.infolist():
+                if info.is_dir():
+                    continue
+                zf.writestr(info.filename, src.read(info))
+        # macOS resource-fork junk that previously broke preview
+        zf.writestr(
+            "CAMOutputs/GerberFiles/._copper_top.gbr",
+            b"\x00\x05\x16\x07" + b"\x00" * 50,
+        )
+        zf.writestr("__MACOSX/._profile.gbr", b"\x00\x00junk")
+    result = zip_ingest.extract_zip(buf.getvalue())
+    names = [f["name"] for f in result["files"]]
+    assert all(not n.startswith("._") for n in names)
+    assert any(f["kind"] == "copper_top" for f in result["files"])
 
 
 def test_excellon_parse():

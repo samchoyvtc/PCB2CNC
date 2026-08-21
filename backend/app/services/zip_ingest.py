@@ -29,12 +29,26 @@ def job_dir(job_id: str) -> Path:
     return ensure_jobs_root() / job_id
 
 
+def is_junk_cam_path(path: Path) -> bool:
+    """Skip macOS AppleDouble / resource-fork junk from zip extracts."""
+    name = path.name
+    if name.startswith("._") or name.startswith("."):
+        return True
+    parts = {p.lower() for p in path.parts}
+    if "__macosx" in parts:
+        return True
+    return False
+
+
 def classify_filename(name: str) -> str | None:
     """Return layer kind from filename, or None if ignored."""
     lower = name.lower()
     stem = Path(lower).stem
     ext = Path(lower).suffix
 
+    # AppleDouble companions look like ._<realfile>.gbr and are not Gerber
+    if name.startswith("._") or name.startswith("."):
+        return None
     if name.lower() in SKIP_NAMES or lower.endswith(".gbrjob"):
         return None
     if "pnp_" in lower or lower.endswith(".txt") and "assembly" in lower:
@@ -88,6 +102,15 @@ def extract_zip(upload_bytes: bytes, job_id: str | None = None) -> dict[str, Any
     for path in sorted(raw.rglob("*")):
         if not path.is_file():
             continue
+        if is_junk_cam_path(path):
+            continue
+        # Skip binary AppleDouble payloads that somehow lost the ._ prefix
+        try:
+            head = path.read_bytes()[:4]
+        except OSError:
+            continue
+        if head.startswith(b"\x00\x05\x16\x07") or head.startswith(b"\x00\x00"):
+            continue
         kind = classify_filename(path.name)
         if kind is None:
             continue
@@ -130,15 +153,16 @@ def list_cam_files(job_id: str) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"Job {job_id} not found")
     files = []
     for path in sorted(cam.iterdir()):
-        if path.is_file():
-            files.append(
-                {
-                    "name": path.name,
-                    "kind": classify_filename(path.name) or "unknown",
-                    "path": str(path.relative_to(root)),
-                    "size": path.stat().st_size,
-                }
-            )
+        if not path.is_file() or is_junk_cam_path(path):
+            continue
+        files.append(
+            {
+                "name": path.name,
+                "kind": classify_filename(path.name) or "unknown",
+                "path": str(path.relative_to(root)),
+                "size": path.stat().st_size,
+            }
+        )
     # Re-apply kind from stored classification when possible
     meta = root / "files.json"
     if meta.exists():
