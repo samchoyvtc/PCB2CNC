@@ -106,3 +106,11 @@ class ToolpathPreviewResponse(BaseModel):
     job_id: str
     image_png_base64: str
     operations: list[str]
+
+
+class MachineToolsResponse(BaseModel):
+    source: Optional[str] = None
+    path: Optional[str] = None
+    columns: list[str] = Field(default_factory=list)
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    message: str = ""

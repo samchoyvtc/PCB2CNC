@@ -2,6 +2,11 @@ import { setupDropzone, uploadZip } from "./upload.js";
 import { BoardPreview, renderLayerToggles } from "./preview.js";
 import { readSettings } from "./settings.js";
 import { generateJob, renderDownloads, showToolpathPreview } from "./output.js";
+import {
+  getSelectedToolNumber,
+  loadMachineTools,
+  uploadMachineTools,
+} from "./tools.js";
 
 const statusEl = document.getElementById("status");
 const fileListEl = document.getElementById("file-list");
@@ -10,15 +15,24 @@ const downloadsEl = document.getElementById("downloads");
 const toolpathImg = document.getElementById("toolpath-preview");
 const btnNext = document.getElementById("btn-next");
 const btnReset = document.getElementById("btn-reset");
+const btnResetHeader = document.getElementById("btn-reset-header");
 const fileInput = document.getElementById("file-input");
 const settingsForm = document.getElementById("settings-form");
+const panelInput = document.getElementById("panel-input");
+const panelPreview = document.getElementById("panel-preview");
 const panelLayers = document.getElementById("panel-layers");
+const panelMachineWrap = document.getElementById("panel-machine-wrap");
 const panelMachine = document.getElementById("panel-machine");
+const convertSection = document.getElementById("convert-section");
 const progressWrap = document.getElementById("progress-wrap");
 const progressFill = document.getElementById("progress-fill");
 const progressLabel = document.getElementById("progress-label");
 const progressMeta = document.getElementById("progress-meta");
 const progressBar = document.getElementById("progress-bar");
+const toolsMeta = document.getElementById("tools-meta");
+const toolsEmpty = document.getElementById("tools-empty");
+const toolsTable = document.getElementById("tools-table");
+const toolsFileInput = document.getElementById("tools-file-input");
 
 const pills = {
   1: document.getElementById("pill-1"),
@@ -37,6 +51,7 @@ const NEXT_LABELS = {
 let jobId = null;
 let currentStage = 1;
 let busy = false;
+let toolsLoaded = false;
 const board = new BoardPreview(document.getElementById("board-canvas"));
 
 function setStatus(message, kind = "") {
@@ -51,6 +66,7 @@ function updateNextButton() {
 
 function setResetEnabled(enabled) {
   btnReset.disabled = !enabled;
+  btnResetHeader.disabled = !enabled;
 }
 
 function setProgress(visible, percent = 0, label = "", meta = "") {
@@ -86,15 +102,45 @@ function setStage(n) {
     el.classList.toggle("active", stage <= n);
     el.classList.toggle("is-locked", !jobId && stage > 1);
   });
+  if (convertSection) {
+    convertSection.hidden = n < 4;
+  }
   updateNextButton();
 }
 
 function showPanel(tab) {
-  const isLayers = tab === "layers";
-  panelLayers.classList.toggle("active", isLayers);
-  panelMachine.classList.toggle("active", !isLayers);
-  panelLayers.hidden = !isLayers;
-  panelMachine.hidden = isLayers;
+  const isMachine = tab === "machine";
+  document.body.classList.toggle("view-machine", isMachine);
+  document.body.classList.toggle("view-preview", !isMachine);
+
+  panelInput.hidden = isMachine;
+  panelPreview.hidden = isMachine;
+  panelLayers.hidden = isMachine;
+  panelMachineWrap.hidden = !isMachine;
+  panelMachine.hidden = !isMachine;
+
+  if (isMachine) {
+    ensureToolsLoaded();
+  }
+}
+
+async function ensureToolsLoaded() {
+  if (toolsLoaded) return;
+  try {
+    await loadMachineTools({
+      metaEl: toolsMeta,
+      emptyEl: toolsEmpty,
+      tableEl: toolsTable,
+      setStatus,
+    });
+    toolsLoaded = true;
+  } catch (err) {
+    console.error(err);
+    toolsMeta.textContent = err.message || String(err);
+    toolsEmpty.hidden = false;
+    toolsEmpty.textContent = err.message || String(err);
+    toolsTable.hidden = true;
+  }
 }
 
 function goPreview() {
@@ -234,6 +280,7 @@ async function runGenerate() {
     busy = true;
     updateNextButton();
     const settings = readSettings(settingsForm);
+    settings.tool_number = getSelectedToolNumber(settings.tool_number || 2);
     const result = await generateJob(jobId, settings);
     renderDownloads(downloadsEl, jobId, result.files);
     showToolpathPreview(toolpathImg, result.toolpath_preview_png_base64);
@@ -267,6 +314,11 @@ async function nextStep() {
   }
 }
 
+function doReset() {
+  resetJob();
+  fileInput.click();
+}
+
 setupDropzone({
   dropzone: document.getElementById("dropzone"),
   input: document.getElementById("file-input"),
@@ -296,9 +348,31 @@ document.getElementById("btn-zoom-in").addEventListener("click", () => board.zoo
 document.getElementById("btn-zoom-out").addEventListener("click", () => board.zoom(1 / 1.2));
 
 btnNext.addEventListener("click", nextStep);
-btnReset.addEventListener("click", () => {
-  resetJob();
-  fileInput.click();
+btnReset.addEventListener("click", doReset);
+btnResetHeader.addEventListener("click", doReset);
+
+document.getElementById("btn-reload-tools").addEventListener("click", async () => {
+  toolsLoaded = false;
+  await ensureToolsLoaded();
 });
 
+toolsFileInput.addEventListener("change", async () => {
+  const file = toolsFileInput.files && toolsFileInput.files[0];
+  toolsFileInput.value = "";
+  if (!file) return;
+  try {
+    await uploadMachineTools(file, {
+      metaEl: toolsMeta,
+      emptyEl: toolsEmpty,
+      tableEl: toolsTable,
+      setStatus,
+    });
+    toolsLoaded = true;
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message || String(err), "error");
+  }
+});
+
+showPanel("layers");
 updateNextButton();

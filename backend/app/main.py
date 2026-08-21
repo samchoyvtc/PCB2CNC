@@ -13,12 +13,13 @@ from fastapi.staticfiles import StaticFiles
 from app.models import (
     GenerateRequest,
     GenerateResponse,
+    MachineToolsResponse,
     PreviewProgressResponse,
     PreviewResponse,
     ToolpathPreviewResponse,
     UploadResponse,
 )
-from app.services import preview, toolpath, zip_ingest
+from app.services import preview, tool_library, toolpath, zip_ingest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +39,30 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "pcb2gcode": toolpath._pcb2gcode_available()}
+
+
+@app.get("/api/machine/tools", response_model=MachineToolsResponse)
+def get_machine_tools() -> MachineToolsResponse:
+    data = tool_library.load_tool_library()
+    return MachineToolsResponse(**data)
+
+
+@app.post("/api/machine/tools/upload", response_model=MachineToolsResponse)
+async def upload_machine_tools(file: UploadFile = File(...)) -> MachineToolsResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty tool library upload")
+    try:
+        saved = tool_library.save_uploaded_library(data)
+        result = tool_library.load_tool_library(saved)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Tool library upload failed")
+        raise HTTPException(status_code=400, detail=f"Failed to parse tool library: {exc}") from exc
+    return MachineToolsResponse(**result)
 
 
 @app.post("/api/jobs/upload", response_model=UploadResponse)

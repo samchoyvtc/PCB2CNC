@@ -34,8 +34,19 @@
     }
     body {
       display: grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto auto 1fr;
       min-height: 100vh;
+    }
+    .global-status-bar {
+      padding: 0.55rem 1.5rem 0.65rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(11, 18, 32, 0.55);
+    }
+    .global-status-bar .status {
+      margin-top: 0;
+    }
+    .global-status-bar .progress-wrap {
+      margin-top: 0.45rem;
     }
     header {
       display: flex;
@@ -68,20 +79,26 @@
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     .next-step {
-      width: 100%;
-      margin-bottom: 0.85rem;
       appearance: none;
       border: 1px solid #16a34a;
       background: linear-gradient(180deg, #4ade80, #22c55e);
       color: #052e16;
       border-radius: 10px;
-      padding: 0.7rem 0.9rem;
+      padding: 0.55rem 0.95rem;
       font: inherit;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       font-weight: 700;
       cursor: pointer;
       box-shadow: 0 6px 16px rgba(34, 197, 94, 0.22);
+      white-space: nowrap;
     }
     .next-step:disabled {
       opacity: 0.45;
@@ -90,6 +107,21 @@
     }
     .next-step:not(:disabled):hover {
       filter: brightness(1.05);
+    }
+    #btn-reset-header {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--bg2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.55rem 0.85rem;
+      font: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    #btn-reset-header:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
     }
     .stage-pill {
       font-size: 0.75rem;
@@ -118,8 +150,112 @@
       padding: 1rem;
       min-height: 0;
     }
+    body.view-machine main {
+      grid-template-columns: 1fr;
+    }
+    body.view-machine #panel-input,
+    body.view-machine #panel-preview,
+    body.view-machine #panel-layers {
+      display: none !important;
+    }
+    body.view-machine #panel-machine-wrap {
+      display: block;
+      max-width: 1100px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    body.view-machine #panel-machine {
+      display: block !important;
+    }
+    body.view-preview #panel-machine-wrap {
+      /* keep right column for layers */
+    }
     @media (max-width: 1100px) {
       main { grid-template-columns: 1fr; }
+    }
+    .tools-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      align-items: center;
+      margin: 0 0 0.65rem;
+    }
+    .tools-toolbar .tools-meta {
+      font-size: 0.8rem;
+      color: var(--muted);
+      flex: 1;
+      min-width: 12rem;
+    }
+    .tools-toolbar button,
+    .tools-toolbar label.file-btn {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--bg2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.4rem 0.7rem;
+      font: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .tools-toolbar label.file-btn {
+      display: inline-flex;
+      align-items: center;
+    }
+    .tools-table-wrap {
+      overflow: auto;
+      max-height: min(55vh, 520px);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(7, 11, 20, 0.45);
+    }
+    .tools-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.75rem;
+    }
+    .tools-table th,
+    .tools-table td {
+      padding: 0.42rem 0.55rem;
+      border-bottom: 1px solid rgba(42, 54, 80, 0.85);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .tools-table th {
+      position: sticky;
+      top: 0;
+      color: var(--muted);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      background: rgba(15, 23, 42, 0.95);
+    }
+    .tools-table td {
+      color: var(--text);
+      font-family: "JetBrains Mono", monospace;
+    }
+    .tools-table tr.is-selected td {
+      background: rgba(56, 189, 248, 0.12);
+    }
+    .tools-table tbody tr {
+      cursor: pointer;
+    }
+    .tools-empty {
+      padding: 1rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .machine-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) 1fr;
+      gap: 1.25rem;
+      align-items: start;
+    }
+    @media (max-width: 800px) {
+      .machine-grid { grid-template-columns: 1fr; }
+    }
+    #convert-section[hidden] {
+      display: none !important;
     }
     .panel {
       background: var(--panel);
@@ -490,16 +626,29 @@
       <h1>Gerber CNC</h1>
       <p>Zip in → colored preview → G-code out</p>
     </div>
-    <div class="stages">
-      <span class="stage-pill active" id="pill-1" data-stage="1">1 Preview</span>
-      <span class="stage-pill" id="pill-2" data-stage="2">2 Machine</span>
-      <span class="stage-pill" id="pill-3" data-stage="3">3 Generate</span>
-      <span class="stage-pill" id="pill-4" data-stage="4">4 Convert</span>
+    <div class="header-actions">
+      <div class="stages">
+        <span class="stage-pill active" id="pill-1" data-stage="1">1 Preview</span>
+        <span class="stage-pill" id="pill-2" data-stage="2">2 Machine</span>
+        <span class="stage-pill" id="pill-3" data-stage="3">3 Generate</span>
+        <span class="stage-pill" id="pill-4" data-stage="4">4 Convert</span>
+      </div>
+      <button type="button" id="btn-reset-header" disabled title="Clear current job and upload another zip">Reset</button>
+      <button type="button" class="next-step" id="btn-next" disabled>Next step</button>
     </div>
   </header>
+  <div class="global-status-bar">
+    <div class="status" id="status">Waiting for zip…</div>
+    <div id="progress-wrap" class="progress-wrap" hidden>
+      <div class="progress-label" id="progress-label">Building preview…</div>
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-meta" id="progress-meta">0%</div>
+    </div>
+  </div>
   <main>
-    <aside class="panel">
-      <button type="button" class="next-step" id="btn-next" disabled>Next step</button>
+    <aside class="panel" id="panel-input">
       <h2>Input</h2>
       <div id="dropzone" tabindex="0" role="button" aria-label="Upload Gerber zip">
         <strong>Drop CAM zip here</strong>
@@ -510,17 +659,9 @@
         <button type="button" id="btn-reset" disabled title="Clear current job and upload another zip">Reset</button>
       </div>
       <ul id="file-list"></ul>
-      <div class="status" id="status">Waiting for zip…</div>
-      <div id="progress-wrap" class="progress-wrap" hidden>
-        <div class="progress-label" id="progress-label">Building preview…</div>
-        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress-bar">
-          <div class="progress-fill" id="progress-fill"></div>
-        </div>
-        <div class="progress-meta" id="progress-meta">0%</div>
-      </div>
     </aside>
 
-    <section class="panel viewer-wrap">
+    <section class="panel viewer-wrap" id="panel-preview">
       <h2>Board preview</h2>
       <div class="viewer-toolbar">
         <button type="button" id="btn-fit">Fit</button>
@@ -532,39 +673,65 @@
       </div>
     </section>
 
-    <aside class="panel">
-      <div class="tab-panel active" id="panel-layers" role="tabpanel">
+    <aside class="panel" id="panel-layers">
+      <div class="tab-panel active" id="panel-layers-inner" role="tabpanel">
         <div id="layer-toggles"></div>
       </div>
+    </aside>
 
-      <div class="tab-panel" id="panel-machine" role="tabpanel" hidden>
-        <h2>2 · Machine settings</h2>
-        <form id="settings-form">
-          <div class="field">
-            <label for="engraving_depth_mm">Engrave depth (mm)</label>
-            <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
+    <aside class="panel" id="panel-machine-wrap" hidden>
+      <div class="tab-panel" id="panel-machine" role="tabpanel">
+        <div class="machine-grid">
+          <div>
+            <h2>2 · Machine settings</h2>
+            <form id="settings-form">
+              <div class="field">
+                <label for="engraving_depth_mm">Engrave depth (mm)</label>
+                <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
+              </div>
+              <div class="field">
+                <label for="feed_mm_min">Feed (mm/min)</label>
+                <input id="feed_mm_min" name="feed_mm_min" type="number" step="10" value="2000" />
+              </div>
+              <div class="field">
+                <label for="spindle_rpm">Spindle RPM</label>
+                <input id="spindle_rpm" name="spindle_rpm" type="number" step="100" value="12000" />
+              </div>
+              <div class="field">
+                <label for="safe_z_mm">Safe Z (mm)</label>
+                <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
+              </div>
+              <div class="field">
+                <label for="stock_thickness_mm">Stock thickness (mm)</label>
+                <input id="stock_thickness_mm" name="stock_thickness_mm" type="number" step="0.1" value="1.5" />
+              </div>
+            </form>
           </div>
-          <div class="field">
-            <label for="feed_mm_min">Feed (mm/min)</label>
-            <input id="feed_mm_min" name="feed_mm_min" type="number" step="10" value="2000" />
+          <div>
+            <h2>Machine tools</h2>
+            <div class="tools-toolbar">
+              <span class="tools-meta" id="tools-meta">Loading PAEN_TOOLS.tlslibrary…</span>
+              <label class="file-btn">
+                Upload library
+                <input id="tools-file-input" type="file" accept=".tlslibrary,.csv,.json,.xml,.txt,application/json,text/csv,text/plain" hidden />
+              </label>
+              <button type="button" id="btn-reload-tools">Reload</button>
+            </div>
+            <div class="tools-table-wrap" id="tools-table-wrap">
+              <div class="tools-empty" id="tools-empty">Waiting for tool library…</div>
+              <table class="tools-table" id="tools-table" hidden>
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
           </div>
-          <div class="field">
-            <label for="spindle_rpm">Spindle RPM</label>
-            <input id="spindle_rpm" name="spindle_rpm" type="number" step="100" value="12000" />
-          </div>
-          <div class="field">
-            <label for="safe_z_mm">Safe Z (mm)</label>
-            <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
-          </div>
-          <div class="field">
-            <label for="stock_thickness_mm">Stock thickness (mm)</label>
-            <input id="stock_thickness_mm" name="stock_thickness_mm" type="number" step="0.1" value="1.5" />
-          </div>
-        </form>
+        </div>
 
-        <h2 style="margin-top:1.25rem">4 · Convert output</h2>
-        <ul id="downloads"></ul>
-        <img id="toolpath-preview" alt="Toolpath verification preview" />
+        <div id="convert-section" hidden>
+          <h2 style="margin-top:1.25rem">4 · Convert output</h2>
+          <ul id="downloads"></ul>
+          <img id="toolpath-preview" alt="Toolpath verification preview" />
+        </div>
       </div>
     </aside>
   </main>
