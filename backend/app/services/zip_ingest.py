@@ -12,7 +12,7 @@ from typing import Any
 JOBS_ROOT = Path(__file__).resolve().parents[3] / "data" / "jobs"
 
 GERBER_EXTS = {".gbr", ".ger", ".gtl", ".gbl", ".gts", ".gbs", ".gto", ".gbo", ".gko", ".gm1", ".pho"}
-DRILL_EXTS = {".xln", ".drl", ".exc", ".txt"}
+DRILL_EXTS = {".xln", ".drl", ".exc"}
 SKIP_NAMES = {"gerber_job.gbrjob"}
 
 
@@ -40,6 +40,39 @@ def is_junk_cam_path(path: Path) -> bool:
     return False
 
 
+def _looks_like_bom(path: Path) -> bool:
+    try:
+        head = path.read_text(errors="replace")[:240].lower()
+    except OSError:
+        return False
+    return "partlist" in head or head.lstrip().startswith("qty")
+
+
+def classify_cam_path(path: Path) -> str | None:
+    """Classify using filename + folder context (Assembly → BOM, etc.)."""
+    name = path.name
+    lower = name.lower()
+    parts = [p.lower() for p in path.parts]
+
+    if is_junk_cam_path(path):
+        return None
+    if name.lower() in SKIP_NAMES or lower.endswith(".gbrjob"):
+        return None
+    if "pnp_" in lower:
+        return None
+
+    # Assembly part list / BOM (e.g. PCB v2.txt) — never treat as drill
+    if lower.endswith(".txt"):
+        in_assembly = "assembly" in parts
+        if in_assembly or _looks_like_bom(path):
+            return "bom"
+        if "drill" in lower:
+            return "drill"
+        return None
+
+    return classify_filename(name)
+
+
 def classify_filename(name: str) -> str | None:
     """Return layer kind from filename, or None if ignored."""
     lower = name.lower()
@@ -51,15 +84,21 @@ def classify_filename(name: str) -> str | None:
         return None
     if name.lower() in SKIP_NAMES or lower.endswith(".gbrjob"):
         return None
-    if "pnp_" in lower or lower.endswith(".txt") and "assembly" in lower:
+    if "pnp_" in lower:
         return None
 
-    if ext in DRILL_EXTS or "drill" in stem:
-        if ext in DRILL_EXTS or stem.startswith("drill"):
+    # BOM filenames often look like "PCB v2.txt" — not drill
+    if lower.endswith(".txt"):
+        if "drill" in stem:
             return "drill"
+        if "partlist" in stem or stem.startswith("pcb"):
+            return "bom"
+        return None
+
+    if ext in DRILL_EXTS or stem.startswith("drill") or re.search(r"(^|[_-])drill([_-]|$)", stem):
+        return "drill"
 
     if ext not in GERBER_EXTS and ext not in {".gbr"}:
-        # EAGLE often uses .gbr only
         if ext not in GERBER_EXTS:
             return None
 
@@ -111,7 +150,7 @@ def extract_zip(upload_bytes: bytes, job_id: str | None = None) -> dict[str, Any
             continue
         if head.startswith(b"\x00\x05\x16\x07") or head.startswith(b"\x00\x00"):
             continue
-        kind = classify_filename(path.name)
+        kind = classify_cam_path(path)
         if kind is None:
             continue
         dest_dir = root / "cam"

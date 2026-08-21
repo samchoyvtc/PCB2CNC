@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import base64
 import logging
-from pathlib import Path
+from collections import defaultdict
 from typing import Any
 
-from app.models import Bounds, DrillHit, LayerPreview, PreviewResponse
+from app.models import (
+    BomItem,
+    Bounds,
+    DrillHit,
+    DrillToolSummary,
+    LayerPreview,
+    PreviewResponse,
+)
 from app.services import parser, zip_ingest
 
 logger = logging.getLogger(__name__)
@@ -50,6 +57,19 @@ def _merge_bounds(bounds_list: list[parser.GerberBounds]) -> parser.GerberBounds
     )
 
 
+def _summarize_tools(hits: list[parser.DrillHit]) -> list[DrillToolSummary]:
+    counts: dict[tuple[str, float], int] = defaultdict(int)
+    for h in hits:
+        key = (h.tool, round(float(h.diameter), 3))
+        counts[key] += 1
+    out = [
+        DrillToolSummary(tool=tool, diameter=dia, count=count)
+        for (tool, dia), count in counts.items()
+    ]
+    out.sort(key=lambda t: (t.diameter, t.tool))
+    return out
+
+
 def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
     root = zip_ingest.job_dir(job_id)
     files = zip_ingest.list_cam_files(job_id)
@@ -57,15 +77,55 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
     layers: list[LayerPreview] = []
     all_bounds: list[parser.GerberBounds] = []
     drills: list[DrillHit] = []
+    bom: list[BomItem] = []
+    bom_source: str | None = None
 
     for meta in files:
         kind = meta["kind"]
         path = root / meta["path"]
+
+        if kind == "bom":
+            try:
+                items = parser.parse_bom_partlist(path)
+                if not bom_source:
+                    bom_source = meta["name"]
+                bom.extend(
+                    BomItem(
+                        qty=i.qty,
+                        value=i.value,
+                        device=i.device,
+                        package=i.package,
+                        parts=i.parts,
+                        description=i.description,
+                    )
+                    for i in items
+                )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"Failed to parse BOM {meta['name']}: {exc}")
+            continue
+
         if kind == "drill":
             try:
                 hits = parser.parse_excellon(path)
+                file_hits = [
+                    parser.DrillHit(
+                        x=h.x,
+                        y=h.y,
+                        diameter=h.diameter,
+                        tool=h.tool,
+                        source=meta["name"],
+                    )
+                    for h in hits
+                ]
                 drills.extend(
-                    DrillHit(x=h.x, y=h.y, diameter=h.diameter, tool=h.tool) for h in hits
+                    DrillHit(
+                        x=h.x,
+                        y=h.y,
+                        diameter=h.diameter,
+                        tool=h.tool,
+                        source=meta["name"],
+                    )
+                    for h in file_hits
                 )
                 color, _, visible = LAYER_COLORS["drill"]
                 layers.append(
@@ -74,6 +134,7 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
                         kind="drill",
                         color=color,
                         visible_default=visible,
+                        drill_tools=_summarize_tools(file_hits),
                     )
                 )
             except Exception as exc:  # noqa: BLE001
@@ -124,6 +185,8 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
         job_id=job_id,
         layers=layers,
         drills=drills,
+        bom=bom,
+        bom_source=bom_source,
         bounds=_bounds_model(merged) if merged else None,
         files=files,
         warnings=warnings,

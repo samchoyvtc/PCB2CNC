@@ -374,22 +374,11 @@ function kindLabel(kind) {
   return kind.replace(/_/g, " ");
 }
 
-function summarizeDrillSizes(drills) {
-  const map = new Map();
-  for (const hit of drills || []) {
-    const dia = Number(hit.diameter);
-    const key = `${hit.tool}|${dia.toFixed(3)}`;
-    const prev = map.get(key) || {
-      tool: hit.tool || "T?",
-      diameter: dia,
-      count: 0,
-    };
-    prev.count += 1;
-    map.set(key, prev);
-  }
-  return [...map.values()].sort(
-    (a, b) => a.diameter - b.diameter || String(a.tool).localeCompare(String(b.tool))
-  );
+function formatDrillTools(tools) {
+  if (!tools || !tools.length) return "";
+  return tools
+    .map((t) => `Ø${Number(t.diameter).toFixed(3)} mm ×${t.count}`)
+    .join(", ");
 }
 
 export function renderLayerToggles(
@@ -403,7 +392,6 @@ export function renderLayerToggles(
 
   const used = new Set();
   const groups = [];
-  const drillSizes = summarizeDrillSizes(drills);
 
   for (const def of LAYER_GROUPS) {
     const members = layers
@@ -413,12 +401,12 @@ export function renderLayerToggles(
           (KIND_ORDER[a.kind] ?? 99) - (KIND_ORDER[b.kind] ?? 99) ||
           a.name.localeCompare(b.name)
       );
-    if (!members.length && !(def.id === "drill" && drillSizes.length)) continue;
+    if (!members.length) continue;
     members.forEach((m) => used.add(m.name));
     groups.push({ ...def, members });
   }
 
-  const other = layers.filter((l) => !used.has(l.name));
+  const other = layers.filter((l) => !used.has(l.name) && l.kind !== "bom");
   if (other.length) {
     groups.push({ id: "other", title: "Other", kinds: [], members: other });
   }
@@ -435,13 +423,10 @@ export function renderLayerToggles(
     const groupCb = document.createElement("input");
     groupCb.type = "checkbox";
     groupCb.className = "group-toggle";
-    const allOn =
-      group.members.length > 0
-        ? group.members.every((m) => m.visible_default)
-        : true;
+    const allOn = group.members.every((m) => m.visible_default);
     const someOn = group.members.some((m) => m.visible_default);
     groupCb.checked = allOn;
-    groupCb.indeterminate = group.members.length > 0 && !allOn && someOn;
+    groupCb.indeterminate = !allOn && someOn;
     groupCb.title = `Toggle all ${group.title} layers`;
     groupCb.addEventListener("click", (e) => e.stopPropagation());
     groupCb.addEventListener("change", () => {
@@ -461,10 +446,15 @@ export function renderLayerToggles(
     title.textContent = `${group.title}`;
     const count = document.createElement("span");
     count.className = "layer-group-count";
-    count.textContent =
-      group.id === "drill" && drillSizes.length
-        ? String(drillSizes.reduce((n, t) => n + t.count, 0))
-        : String(group.members.length);
+    if (group.id === "drill") {
+      const holes = group.members.reduce(
+        (n, m) => n + (m.drill_tools || []).reduce((a, t) => a + t.count, 0),
+        0
+      );
+      count.textContent = holes ? String(holes) : String(group.members.length);
+    } else {
+      count.textContent = String(group.members.length);
+    }
 
     summary.append(groupCb, title, count);
     details.append(summary);
@@ -474,6 +464,7 @@ export function renderLayerToggles(
 
     for (const layer of group.members) {
       const li = document.createElement("li");
+      li.className = "layer-row";
       const label = document.createElement("label");
       const cb = document.createElement("input");
       cb.type = "checkbox";
@@ -481,7 +472,7 @@ export function renderLayerToggles(
       cb.dataset.layer = layer.name;
       cb.addEventListener("change", () => {
         onToggle(layer.name, cb.checked);
-        const memberCbs = [...list.querySelectorAll('input[data-layer]')];
+        const memberCbs = [...list.querySelectorAll("input[data-layer]")];
         const checked = memberCbs.filter((c) => c.checked).length;
         groupCb.checked = checked === memberCbs.length;
         groupCb.indeterminate = checked > 0 && checked < memberCbs.length;
@@ -491,32 +482,72 @@ export function renderLayerToggles(
       swatch.style.background = layer.color;
       const text = document.createElement("span");
       text.className = "layer-name";
-      text.textContent = `${kindLabel(layer.kind)} · ${layer.name}`;
+      text.textContent =
+        group.id === "drill" ? layer.name : `${kindLabel(layer.kind)} · ${layer.name}`;
       if (layer.error) {
         text.textContent += " (error)";
         text.style.color = "#ef4444";
       }
       label.append(cb, swatch, text);
       li.append(label);
-      list.append(li);
-    }
 
-    if (group.id === "drill" && drillSizes.length) {
-      const sizes = document.createElement("ul");
-      sizes.className = "drill-sizes";
-      sizes.setAttribute("aria-label", "Drill sizes");
-      for (const tool of drillSizes) {
-        const li = document.createElement("li");
-        li.innerHTML =
-          `<span class="tool">${tool.tool}</span>` +
-          `<span class="size">Ø ${tool.diameter.toFixed(3)} mm</span>` +
-          `<span class="hits">×${tool.count}</span>`;
-        sizes.append(li);
+      if (group.id === "drill") {
+        const size = document.createElement("span");
+        size.className = "drill-file-size";
+        size.textContent = formatDrillTools(layer.drill_tools) || "—";
+        li.append(size);
       }
-      list.append(sizes);
+
+      list.append(li);
     }
 
     details.append(list);
     container.append(details);
   }
+
+  // drills arg kept for API compatibility / future per-hit filtering
+  void drills;
+}
+
+export function renderBomTable(container, bom, sourceName) {
+  container.innerHTML = "";
+  if (!bom || !bom.length) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+
+  const heading = document.createElement("h2");
+  heading.textContent = sourceName ? `BOM · ${sourceName}` : "BOM";
+  container.append(heading);
+
+  const wrap = document.createElement("div");
+  wrap.className = "bom-table-wrap";
+  const table = document.createElement("table");
+  table.className = "bom-table";
+  table.innerHTML =
+    "<thead><tr>" +
+    "<th>Qty</th><th>Parts</th><th>Value</th><th>Device</th><th>Package</th><th>Description</th>" +
+    "</tr></thead>";
+  const tbody = document.createElement("tbody");
+  for (const row of bom) {
+    const tr = document.createElement("tr");
+    const cells = [
+      row.qty,
+      row.parts || "",
+      row.value || "",
+      row.device || "",
+      row.package || "",
+      row.description || "",
+    ];
+    for (const cell of cells) {
+      const td = document.createElement("td");
+      td.textContent = String(cell);
+      tr.append(td);
+    }
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  wrap.append(table);
+  container.append(wrap);
 }

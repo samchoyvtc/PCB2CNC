@@ -29,6 +29,29 @@ class Bounds(BaseModel):
     height: float
 
 
+class DrillHit(BaseModel):
+    x: float
+    y: float
+    diameter: float
+    tool: str
+    source: Optional[str] = None
+
+
+class DrillToolSummary(BaseModel):
+    tool: str
+    diameter: float
+    count: int
+
+
+class BomItem(BaseModel):
+    qty: int
+    value: str = ""
+    device: str = ""
+    package: str = ""
+    parts: str = ""
+    description: str = ""
+
+
 class LayerPreview(BaseModel):
     name: str
     kind: str
@@ -37,19 +60,15 @@ class LayerPreview(BaseModel):
     image_png_base64: Optional[str] = None
     bounds: Optional[Bounds] = None
     error: Optional[str] = None
-
-
-class DrillHit(BaseModel):
-    x: float
-    y: float
-    diameter: float
-    tool: str
+    drill_tools: list[DrillToolSummary] = Field(default_factory=list)
 
 
 class PreviewResponse(BaseModel):
     job_id: str
     layers: list[LayerPreview]
     drills: list[DrillHit]
+    bom: list[BomItem] = Field(default_factory=list)
+    bom_source: Optional[str] = None
     bounds: Optional[Bounds] = None
     files: list[dict[str, Any]]
     warnings: list[str] = Field(default_factory=list)

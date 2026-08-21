@@ -16,6 +16,17 @@ class DrillHit:
     y: float
     diameter: float
     tool: str
+    source: str | None = None
+
+
+@dataclass
+class BomItem:
+    qty: int
+    value: str
+    device: str
+    package: str
+    parts: str
+    description: str
 
 
 @dataclass
@@ -204,3 +215,59 @@ def _decode_coord(raw: str, integers: int, decimals: int, zero_suppress: str) ->
     # (already matches LZ for typical 3.3 values like 11900 → 11.900).
     _ = (integers, zero_suppress)  # retained for call-site compatibility
     return value
+
+
+def parse_bom_partlist(path: Path) -> list[BomItem]:
+    """Parse EAGLE/Fusion 'Partlist exported…' text into BOM rows."""
+    text = path.read_text(errors="replace")
+    lines = [ln.rstrip("\n") for ln in text.splitlines()]
+    if not lines:
+        return []
+
+    header_idx = None
+    header = ""
+    for i, ln in enumerate(lines):
+        if re.match(r"^\s*Qty\b", ln, re.IGNORECASE):
+            header_idx = i
+            header = ln
+            break
+    if header_idx is None:
+        return []
+
+    # Prefer fixed column starts from the header labels
+    labels = ["Qty", "Value", "Device", "Package", "Parts", "Description", "CATEGORY"]
+    starts: list[tuple[str, int]] = []
+    for label in labels:
+        idx = header.find(label)
+        if idx >= 0:
+            starts.append((label.lower(), idx))
+    starts.sort(key=lambda x: x[1])
+
+    def slice_field(line: str, name: str) -> str:
+        for i, (label, start) in enumerate(starts):
+            if label != name:
+                continue
+            end = starts[i + 1][1] if i + 1 < len(starts) else len(line)
+            return line[start:end].strip()
+        return ""
+
+    items: list[BomItem] = []
+    for ln in lines[header_idx + 1 :]:
+        if not ln.strip() or ln.lower().startswith("partlist"):
+            continue
+        qty_raw = slice_field(ln, "qty") or ln[:4].strip()
+        try:
+            qty = int(float(qty_raw))
+        except ValueError:
+            continue
+        items.append(
+            BomItem(
+                qty=qty,
+                value=slice_field(ln, "value"),
+                device=slice_field(ln, "device"),
+                package=slice_field(ln, "package"),
+                parts=slice_field(ln, "parts"),
+                description=slice_field(ln, "description"),
+            )
+        )
+    return items
