@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -47,6 +48,37 @@ def test_parse_json():
     assert tools[1]["name"] == "Cutout"
 
 
+def test_large_json_does_not_hit_csv_field_limit():
+    """Regression: nested JSON without a top-level tools[] used to fall through to CSV
+    and raise '_csv.Error: field larger than field limit (131072)'."""
+    tool = {
+        "name": "Engraver",
+        "type": "vbit",
+        "geometry": {"diameter": 0.1, "angle": 30},
+        "feed": 800,
+        "rpm": 12000,
+        "blob": "x" * 200_000,  # oversized nested string should be ignored
+    }
+    payload = {"library": {"categories": [{"tools": [tool]}]}}
+    raw = json.dumps(payload).encode("utf-8")
+    assert len(raw) > 131072
+    tools, columns = tool_library.parse_tool_library_bytes(raw, "PAEN_TOOLS.tlslibrary")
+    assert len(tools) >= 1
+    assert any("name" in c.lower() or c == "name" for c in columns)
+    assert tools[0].get("name") == "Engraver"
+
+
+def test_csv_field_limit_raised_for_wide_cells():
+    huge = "A" * 200_000
+    text = f"Tool,Name,Notes\n1,Bit,{huge}\n"
+    tools, columns = tool_library.parse_tool_library_bytes(
+        text.encode("utf-8"), "wide.csv"
+    )
+    assert len(tools) == 1
+    assert "Notes" in columns
+    assert str(tools[0]["Notes"]).endswith("...")
+
+
 def test_api_upload_and_get(tmp_path: Path, monkeypatch):
     dest = tmp_path / "PAEN_TOOLS.tlslibrary"
     monkeypatch.setattr(
@@ -55,11 +87,9 @@ def test_api_upload_and_get(tmp_path: Path, monkeypatch):
         (dest,),
     )
 
-    # Missing initially
     res = client.get("/api/machine/tools")
     assert res.status_code == 200
-    body = res.json()
-    assert body["tools"] == []
+    assert res.json()["tools"] == []
 
     up = client.post(
         "/api/machine/tools/upload",
