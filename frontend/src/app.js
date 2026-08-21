@@ -46,9 +46,12 @@ async function loadPreview(id) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || "Preview failed");
   await board.setPreview(data);
-  renderLayerToggles(layerTogglesEl, data.layers, (name, visible) => {
-    board.setVisible(name, visible);
-  });
+  renderLayerToggles(
+    layerTogglesEl,
+    data.layers,
+    (name, visible) => board.setVisible(name, visible),
+    (names, visible) => board.setGroupVisible(names, visible)
+  );
   if (data.warnings && data.warnings.length) {
     setStatus(data.warnings.join(" · "), "error");
   } else {
