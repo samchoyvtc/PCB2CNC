@@ -68,6 +68,12 @@
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+    .machine-actions {
+      margin-top: 0.85rem;
+    }
+    .machine-actions .primary {
+      width: 100%;
+    }
     .stage-pill {
       font-size: 0.75rem;
       padding: 0.35rem 0.65rem;
@@ -75,6 +81,12 @@
       border-radius: 999px;
       color: var(--muted);
       background: var(--bg1);
+      cursor: pointer;
+    }
+    .stage-pill:disabled,
+    .stage-pill.is-locked {
+      cursor: default;
+      opacity: 0.55;
     }
     .stage-pill.active {
       color: #111;
@@ -397,9 +409,10 @@
       <p>Zip in → colored preview → G-code out</p>
     </div>
     <div class="stages">
-      <span class="stage-pill active" id="pill-1">1 Preview</span>
-      <span class="stage-pill" id="pill-2">2 Generate</span>
-      <span class="stage-pill" id="pill-3">3 Convert</span>
+      <span class="stage-pill active" id="pill-1" data-stage="1">1 Preview</span>
+      <span class="stage-pill" id="pill-2" data-stage="2">2 Machine</span>
+      <span class="stage-pill" id="pill-3" data-stage="3">3 Generate</span>
+      <span class="stage-pill" id="pill-4" data-stage="4">4 Convert</span>
     </div>
   </header>
   <main>
@@ -429,8 +442,8 @@
 
     <aside class="panel">
       <div class="side-tabs" role="tablist" aria-label="Side panel">
-        <button type="button" class="side-tab active" id="tab-layers" data-tab="layers" role="tab" aria-selected="true">Layers</button>
-        <button type="button" class="side-tab" id="tab-machine" data-tab="machine" role="tab" aria-selected="false">Machine</button>
+        <button type="button" class="side-tab active" id="tab-layers" data-tab="layers" role="tab" aria-selected="true">1 Preview</button>
+        <button type="button" class="side-tab" id="tab-machine" data-tab="machine" role="tab" aria-selected="false">2 Machine</button>
       </div>
 
       <div class="tab-panel active" id="panel-layers" role="tabpanel">
@@ -439,7 +452,7 @@
       </div>
 
       <div class="tab-panel" id="panel-machine" role="tabpanel" hidden>
-        <h2>Machine</h2>
+        <h2>2 · Machine settings</h2>
         <form id="settings-form">
           <div class="field">
             <label for="engraving_depth_mm">Engrave depth (mm)</label>
@@ -463,7 +476,11 @@
           </div>
         </form>
 
-        <h2 style="margin-top:1.25rem">Output</h2>
+        <div class="machine-actions">
+          <button type="button" class="primary" id="btn-generate-machine" disabled>3 · Generate G-code</button>
+        </div>
+
+        <h2 style="margin-top:1.25rem">4 · Convert output</h2>
         <ul id="downloads"></ul>
         <img id="toolpath-preview" alt="Toolpath verification preview" />
       </div>

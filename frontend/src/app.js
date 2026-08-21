@@ -10,6 +10,7 @@ const bomPanelEl = document.getElementById("bom-panel");
 const downloadsEl = document.getElementById("downloads");
 const toolpathImg = document.getElementById("toolpath-preview");
 const btnGenerate = document.getElementById("btn-generate");
+const btnGenerateMachine = document.getElementById("btn-generate-machine");
 const settingsForm = document.getElementById("settings-form");
 const tabLayers = document.getElementById("tab-layers");
 const tabMachine = document.getElementById("tab-machine");
@@ -20,9 +21,11 @@ const pills = {
   1: document.getElementById("pill-1"),
   2: document.getElementById("pill-2"),
   3: document.getElementById("pill-3"),
+  4: document.getElementById("pill-4"),
 };
 
 let jobId = null;
+let currentStage = 1;
 const board = new BoardPreview(document.getElementById("board-canvas"));
 
 function setStatus(message, kind = "") {
@@ -30,13 +33,21 @@ function setStatus(message, kind = "") {
   statusEl.className = `status ${kind}`.trim();
 }
 
+function setGenerateEnabled(enabled) {
+  btnGenerate.disabled = !enabled;
+  btnGenerateMachine.disabled = !enabled;
+}
+
 function setStage(n) {
+  currentStage = n;
   Object.entries(pills).forEach(([k, el]) => {
-    el.classList.toggle("active", Number(k) <= n);
+    const stage = Number(k);
+    el.classList.toggle("active", stage <= n);
+    el.classList.toggle("is-locked", !jobId && stage > 1);
   });
 }
 
-function setSideTab(tab) {
+function setSideTab(tab, { bumpStage = true } = {}) {
   const isLayers = tab === "layers";
   tabLayers.classList.toggle("active", isLayers);
   tabMachine.classList.toggle("active", !isLayers);
@@ -46,6 +57,15 @@ function setSideTab(tab) {
   panelMachine.classList.toggle("active", !isLayers);
   panelLayers.hidden = !isLayers;
   panelMachine.hidden = isLayers;
+
+  if (!bumpStage || !jobId) return;
+  if (isLayers) {
+    setStage(Math.max(currentStage, 1) === 1 ? 1 : Math.min(currentStage, 1) || 1);
+    // Stay on preview unless already further along — don't regress past convert
+    if (currentStage < 2) setStage(1);
+  } else if (currentStage < 3) {
+    setStage(2);
+  }
 }
 
 function renderFiles(files) {
@@ -76,20 +96,20 @@ async function loadPreview(id) {
   } else {
     const bomN = (data.bom || []).length;
     setStatus(
-      `Preview ready · ${data.layers.length} layers · ${data.drills.length} drills` +
+      `Stage 1 Preview ready · ${data.layers.length} layers · ${data.drills.length} drills` +
         (bomN ? ` · ${bomN} BOM parts` : ""),
       "ok"
     );
   }
   setStage(1);
-  setSideTab("layers");
-  btnGenerate.disabled = false;
+  setSideTab("layers", { bumpStage: false });
+  setGenerateEnabled(true);
 }
 
 async function onZip(file) {
   try {
     setStatus(`Uploading ${file.name}…`);
-    btnGenerate.disabled = true;
+    setGenerateEnabled(false);
     downloadsEl.innerHTML = "";
     showToolpathPreview(toolpathImg, null);
     renderBomTable(bomPanelEl, [], null);
@@ -101,7 +121,29 @@ async function onZip(file) {
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
-    btnGenerate.disabled = true;
+    setGenerateEnabled(false);
+  }
+}
+
+async function runGenerate() {
+  if (!jobId) return;
+  try {
+    setSideTab("machine", { bumpStage: false });
+    setStage(3);
+    setStatus("Stage 3 · Generating CNC G-code…");
+    setGenerateEnabled(false);
+    const settings = readSettings(settingsForm);
+    const result = await generateJob(jobId, settings);
+    renderDownloads(downloadsEl, jobId, result.files);
+    showToolpathPreview(toolpathImg, result.toolpath_preview_png_base64);
+    setStatus(`Stage 4 Convert ready · ${result.message}`, "ok");
+    setStage(4);
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message || String(err), "error");
+    setStage(2);
+  } finally {
+    setGenerateEnabled(!!jobId);
   }
 }
 
@@ -113,29 +155,52 @@ setupDropzone({
 });
 
 tabLayers.addEventListener("click", () => setSideTab("layers"));
-tabMachine.addEventListener("click", () => setSideTab("machine"));
+tabMachine.addEventListener("click", () => {
+  if (!jobId) {
+    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    return;
+  }
+  setSideTab("machine");
+});
+
+pills[1].addEventListener("click", () => {
+  if (!jobId) return;
+  setSideTab("layers");
+  setStage(Math.max(1, Math.min(currentStage, 1)) || 1);
+  if (currentStage > 1) setStage(currentStage); // keep progress highlight via active<=n
+  setStage(Math.max(currentStage, 1));
+  setSideTab("layers", { bumpStage: false });
+  if (currentStage < 2) setStage(1);
+});
+
+pills[2].addEventListener("click", () => {
+  if (!jobId) {
+    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    return;
+  }
+  setSideTab("machine");
+});
+
+pills[3].addEventListener("click", () => {
+  if (!jobId) return;
+  setSideTab("machine", { bumpStage: false });
+  runGenerate();
+});
+
+pills[4].addEventListener("click", () => {
+  if (!jobId) return;
+  setSideTab("machine", { bumpStage: false });
+  if (currentStage >= 4) setStage(4);
+  else setStatus("Generate G-code first (Stage 3)", "error");
+});
 
 document.getElementById("btn-fit").addEventListener("click", () => board.fit());
 document.getElementById("btn-zoom-in").addEventListener("click", () => board.zoom(1.2));
 document.getElementById("btn-zoom-out").addEventListener("click", () => board.zoom(1 / 1.2));
 
-btnGenerate.addEventListener("click", async () => {
-  if (!jobId) return;
-  try {
-    setStage(2);
-    setStatus("Generating CNC G-code…");
-    btnGenerate.disabled = true;
-    const settings = readSettings(settingsForm);
-    const result = await generateJob(jobId, settings);
-    renderDownloads(downloadsEl, jobId, result.files);
-    showToolpathPreview(toolpathImg, result.toolpath_preview_png_base64);
-    setStatus(result.message, "ok");
-    setStage(3);
-    setSideTab("machine");
-  } catch (err) {
-    console.error(err);
-    setStatus(err.message || String(err), "error");
-  } finally {
-    btnGenerate.disabled = !jobId;
-  }
+btnGenerate.addEventListener("click", () => {
+  setSideTab("machine", { bumpStage: false });
+  setStage(2);
+  runGenerate();
 });
+btnGenerateMachine.addEventListener("click", runGenerate);
