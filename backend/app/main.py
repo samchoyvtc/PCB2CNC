@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app.models import (
     GenerateRequest,
     GenerateResponse,
+    PreviewProgressResponse,
     PreviewResponse,
     ToolpathPreviewResponse,
     UploadResponse,
@@ -71,6 +72,28 @@ def get_preview(job_id: str) -> PreviewResponse:
     except Exception as exc:  # noqa: BLE001
         logger.exception("Preview failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/preview/start", response_model=PreviewProgressResponse)
+def start_preview(job_id: str) -> PreviewProgressResponse:
+    try:
+        data = preview.start_preview_job(job_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Preview start failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return PreviewProgressResponse(**data)
+
+
+@app.get("/api/jobs/{job_id}/preview/progress", response_model=PreviewProgressResponse)
+def preview_progress(job_id: str) -> PreviewProgressResponse:
+    try:
+        zip_ingest.list_cam_files(job_id)
+        data = preview.read_preview_progress(job_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return PreviewProgressResponse(**data)
 
 
 @app.post("/api/jobs/{job_id}/generate", response_model=GenerateResponse)

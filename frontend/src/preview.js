@@ -386,11 +386,25 @@ function kindLabel(kind) {
   return kind.replace(/_/g, " ");
 }
 
-function formatDrillTools(tools) {
-  if (!tools || !tools.length) return "";
-  return tools
-    .map((t) => `Ø${Number(t.diameter).toFixed(3)} mm ×${t.count}`)
-    .join(", ");
+function collectDrillRows(members) {
+  const map = new Map();
+  for (const layer of members) {
+    for (const tool of layer.drill_tools || []) {
+      const dia = Number(tool.diameter);
+      const key = `${tool.tool}|${dia.toFixed(3)}`;
+      const prev = map.get(key) || {
+        tool: tool.tool || "T?",
+        diameter: dia,
+        qty: 0,
+        file: layer.name,
+      };
+      prev.qty += Number(tool.count) || 0;
+      map.set(key, prev);
+    }
+  }
+  return [...map.values()].sort(
+    (a, b) => a.diameter - b.diameter || String(a.tool).localeCompare(String(b.tool))
+  );
 }
 
 export function renderLayerToggles(
@@ -459,10 +473,7 @@ export function renderLayerToggles(
     const count = document.createElement("span");
     count.className = "layer-group-count";
     if (group.id === "drill") {
-      const holes = group.members.reduce(
-        (n, m) => n + (m.drill_tools || []).reduce((a, t) => a + t.count, 0),
-        0
-      );
+      const holes = collectDrillRows(group.members).reduce((n, r) => n + r.qty, 0);
       count.textContent = holes ? String(holes) : String(group.members.length);
     } else {
       count.textContent = String(group.members.length);
@@ -502,22 +513,37 @@ export function renderLayerToggles(
       }
       label.append(cb, swatch, text);
       li.append(label);
-
-      if (group.id === "drill") {
-        const size = document.createElement("span");
-        size.className = "drill-file-size";
-        size.textContent = formatDrillTools(layer.drill_tools) || "—";
-        li.append(size);
-      }
-
       list.append(li);
+    }
+
+    if (group.id === "drill") {
+      const rows = collectDrillRows(group.members);
+      if (rows.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "drill-table-wrap";
+        const table = document.createElement("table");
+        table.className = "drill-table";
+        table.innerHTML =
+          "<thead><tr><th>Tool</th><th>Drill size</th><th>Qty</th></tr></thead>";
+        const tbody = document.createElement("tbody");
+        for (const row of rows) {
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            `<td>${row.tool}</td>` +
+            `<td>Ø ${row.diameter.toFixed(3)} mm</td>` +
+            `<td>${row.qty}</td>`;
+          tbody.append(tr);
+        }
+        table.append(tbody);
+        wrap.append(table);
+        list.append(wrap);
+      }
     }
 
     details.append(list);
     container.append(details);
   }
 
-  // drills arg kept for API compatibility / future per-hit filtering
   void drills;
 }
 

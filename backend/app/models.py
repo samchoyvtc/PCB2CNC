@@ -74,6 +74,17 @@ class PreviewResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PreviewProgressResponse(BaseModel):
+    job_id: str
+    state: str
+    current: int = 0
+    total: int = 0
+    percent: int = 0
+    message: str = ""
+    error: Optional[str] = None
+    result: Optional[PreviewResponse] = None
+
+
 class UploadResponse(BaseModel):
     job_id: str
     files: list[dict[str, Any]]

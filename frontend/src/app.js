@@ -14,10 +14,13 @@ const btnGenerateMachine = document.getElementById("btn-generate-machine");
 const btnReset = document.getElementById("btn-reset");
 const fileInput = document.getElementById("file-input");
 const settingsForm = document.getElementById("settings-form");
-const tabLayers = document.getElementById("tab-layers");
-const tabMachine = document.getElementById("tab-machine");
 const panelLayers = document.getElementById("panel-layers");
 const panelMachine = document.getElementById("panel-machine");
+const progressWrap = document.getElementById("progress-wrap");
+const progressFill = document.getElementById("progress-fill");
+const progressLabel = document.getElementById("progress-label");
+const progressMeta = document.getElementById("progress-meta");
+const progressBar = document.getElementById("progress-bar");
 
 const pills = {
   1: document.getElementById("pill-1"),
@@ -44,6 +47,15 @@ function setResetEnabled(enabled) {
   btnReset.disabled = !enabled;
 }
 
+function setProgress(visible, percent = 0, label = "", meta = "") {
+  progressWrap.hidden = !visible;
+  const pct = Math.max(0, Math.min(100, Math.round(percent)));
+  progressFill.style.width = `${pct}%`;
+  progressBar.setAttribute("aria-valuenow", String(pct));
+  progressLabel.textContent = label || "Building colored layer preview…";
+  progressMeta.textContent = meta || `${pct}%`;
+}
+
 function resetJob() {
   jobId = null;
   currentStage = 1;
@@ -56,6 +68,7 @@ function resetJob() {
   board.clear();
   setGenerateEnabled(false);
   setResetEnabled(false);
+  setProgress(false);
   setStage(1);
   showPanel("layers");
   setStatus("Ready for a new zip…");
@@ -72,10 +85,6 @@ function setStage(n) {
 
 function showPanel(tab) {
   const isLayers = tab === "layers";
-  tabLayers.classList.toggle("active", isLayers);
-  tabMachine.classList.toggle("active", !isLayers);
-  tabLayers.setAttribute("aria-selected", String(isLayers));
-  tabMachine.setAttribute("aria-selected", String(!isLayers));
   panelLayers.classList.toggle("active", isLayers);
   panelMachine.classList.toggle("active", !isLayers);
   panelLayers.hidden = !isLayers;
@@ -88,8 +97,6 @@ function goPreview() {
     return;
   }
   showPanel("layers");
-  setStage(Math.max(currentStage, 1) === 1 ? 1 : currentStage < 2 ? 1 : currentStage);
-  // Viewing preview: if not yet past machine, mark stage 1
   if (currentStage < 2) setStage(1);
 }
 
@@ -111,11 +118,43 @@ function renderFiles(files) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function loadPreview(id) {
   setStatus("Building colored layer preview…");
-  const res = await fetch(`/api/jobs/${id}/preview`);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || "Preview failed");
+  setProgress(true, 0, "Starting preview…", "0%");
+
+  const startRes = await fetch(`/api/jobs/${id}/preview/start`, { method: "POST" });
+  const startData = await startRes.json().catch(() => ({}));
+  if (!startRes.ok) throw new Error(startData.detail || "Failed to start preview");
+
+  let data = null;
+  for (;;) {
+    const res = await fetch(`/api/jobs/${id}/preview/progress`);
+    const prog = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(prog.detail || "Preview progress failed");
+
+    setProgress(
+      true,
+      prog.percent || 0,
+      prog.message || "Building colored layer preview…",
+      `${prog.percent || 0}%` +
+        (prog.total ? ` · ${prog.current || 0}/${prog.total}` : "")
+    );
+
+    if (prog.state === "done" && prog.result) {
+      data = prog.result;
+      break;
+    }
+    if (prog.state === "error") {
+      throw new Error(prog.error || "Preview failed");
+    }
+    await sleep(200);
+  }
+
+  setProgress(true, 100, "Preview complete", "100%");
   await board.setPreview(data);
   renderLayerToggles(
     layerTogglesEl,
@@ -135,10 +174,11 @@ async function loadPreview(id) {
       "ok"
     );
   }
+  setTimeout(() => setProgress(false), 600);
   setStage(1);
   showPanel("layers");
   setGenerateEnabled(true);
-  btnReset.disabled = false;
+  setResetEnabled(true);
 }
 
 async function onZip(file) {
@@ -148,15 +188,18 @@ async function onZip(file) {
     downloadsEl.innerHTML = "";
     showToolpathPreview(toolpathImg, null);
     renderBomTable(bomPanelEl, [], null);
+    setProgress(true, 5, "Uploading zip…", "5%");
     const uploaded = await uploadZip(file);
     jobId = uploaded.job_id;
     renderFiles(uploaded.files);
     setStatus(uploaded.message, "ok");
+    setResetEnabled(true);
     await loadPreview(jobId);
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
     setGenerateEnabled(false);
+    setProgress(false);
   }
 }
 
@@ -189,8 +232,6 @@ setupDropzone({
   setStatus,
 });
 
-tabLayers.addEventListener("click", goPreview);
-tabMachine.addEventListener("click", goMachine);
 pills[1].addEventListener("click", goPreview);
 pills[2].addEventListener("click", goMachine);
 pills[3].addEventListener("click", () => {

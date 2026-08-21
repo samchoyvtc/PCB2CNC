@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import threading
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Any
 
 from app.models import (
@@ -18,6 +21,8 @@ from app.models import (
 from app.services import parser, zip_ingest
 
 logger = logging.getLogger(__name__)
+
+ProgressCb = Callable[[int, int, str], None]
 
 LAYER_COLORS: dict[str, tuple[str, tuple[int, int, int, int], bool]] = {
     # kind: (css_hex, rgba, visible_default)
@@ -33,6 +38,9 @@ LAYER_COLORS: dict[str, tuple[str, tuple[int, int, int, int], bool]] = {
     "gerber_other": ("#60A5FA", (96, 165, 250, 160), False),
     "drill": ("#F97316", (249, 115, 22, 255), True),
 }
+
+_preview_lock = threading.Lock()
+_preview_threads: dict[str, threading.Thread] = {}
 
 
 def _bounds_model(b: parser.GerberBounds) -> Bounds:
@@ -70,7 +78,62 @@ def _summarize_tools(hits: list[parser.DrillHit]) -> list[DrillToolSummary]:
     return out
 
 
-def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
+def _progress_path(job_id: str):
+    return zip_ingest.job_dir(job_id) / "preview_progress.json"
+
+
+def _result_path(job_id: str):
+    return zip_ingest.job_dir(job_id) / "preview_result.json"
+
+
+def write_preview_progress(
+    job_id: str,
+    *,
+    state: str,
+    current: int = 0,
+    total: int = 0,
+    message: str = "",
+    error: str | None = None,
+) -> None:
+    percent = int(round((current / total) * 100)) if total else (100 if state == "done" else 0)
+    payload = {
+        "job_id": job_id,
+        "state": state,
+        "current": current,
+        "total": total,
+        "percent": min(100, max(0, percent)),
+        "message": message,
+        "error": error,
+    }
+    _progress_path(job_id).write_text(json.dumps(payload))
+
+
+def read_preview_progress(job_id: str) -> dict[str, Any]:
+    path = _progress_path(job_id)
+    if not path.exists():
+        return {
+            "job_id": job_id,
+            "state": "idle",
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "message": "",
+            "error": None,
+            "result": None,
+        }
+    data = json.loads(path.read_text())
+    if data.get("state") == "done" and _result_path(job_id).exists():
+        data["result"] = json.loads(_result_path(job_id).read_text())
+    else:
+        data["result"] = None
+    return data
+
+
+def build_preview(
+    job_id: str,
+    dpmm: int = 35,
+    progress_cb: ProgressCb | None = None,
+) -> PreviewResponse:
     root = zip_ingest.job_dir(job_id)
     files = zip_ingest.list_cam_files(job_id)
     warnings: list[str] = []
@@ -80,9 +143,18 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
     bom: list[BomItem] = []
     bom_source: str | None = None
 
-    for meta in files:
+    total = max(len(files), 1)
+
+    def report(i: int, label: str) -> None:
+        if progress_cb:
+            progress_cb(i, total, label)
+
+    report(0, "Starting preview…")
+
+    for index, meta in enumerate(files, start=1):
         kind = meta["kind"]
         path = root / meta["path"]
+        report(index - 1, f"Processing {meta['name']}…")
 
         if kind == "bom":
             try:
@@ -102,6 +174,7 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
                 )
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"Failed to parse BOM {meta['name']}: {exc}")
+            report(index, f"Parsed BOM {meta['name']}")
             continue
 
         if kind == "drill":
@@ -139,6 +212,7 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
                 )
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"Failed to parse drill {meta['name']}: {exc}")
+            report(index, f"Parsed drill {meta['name']}")
             continue
 
         color_hex, rgba, visible = LAYER_COLORS.get(
@@ -170,8 +244,8 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
                 )
             )
             warnings.append(f"Failed to preview {meta['name']}: {exc}")
+        report(index, f"Rendered {meta['name']}")
 
-    # Expand overall bounds with drill hits
     merged = _merge_bounds(all_bounds)
     if drills:
         xs = [d.x for d in drills]
@@ -181,7 +255,7 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
         )
         merged = _merge_bounds([b for b in [merged, drill_bounds] if b])
 
-    return PreviewResponse(
+    result = PreviewResponse(
         job_id=job_id,
         layers=layers,
         drills=drills,
@@ -191,6 +265,63 @@ def build_preview(job_id: str, dpmm: int = 35) -> PreviewResponse:
         files=files,
         warnings=warnings,
     )
+    report(total, "Preview complete")
+    return result
+
+
+def start_preview_job(job_id: str) -> dict[str, Any]:
+    """Kick off background preview generation with progress updates."""
+    zip_ingest.list_cam_files(job_id)
+
+    with _preview_lock:
+        existing = _preview_threads.get(job_id)
+        if existing and existing.is_alive():
+            return read_preview_progress(job_id)
+
+        write_preview_progress(
+            job_id,
+            state="running",
+            current=0,
+            total=max(len(zip_ingest.list_cam_files(job_id)), 1),
+            message="Starting preview…",
+        )
+
+        def runner() -> None:
+            try:
+                def cb(current: int, total: int, message: str) -> None:
+                    write_preview_progress(
+                        job_id,
+                        state="running",
+                        current=current,
+                        total=total,
+                        message=message,
+                    )
+
+                result = build_preview(job_id, progress_cb=cb)
+                _result_path(job_id).write_text(result.model_dump_json())
+                write_preview_progress(
+                    job_id,
+                    state="done",
+                    current=1,
+                    total=1,
+                    message="Preview complete",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Async preview failed for %s", job_id)
+                write_preview_progress(
+                    job_id,
+                    state="error",
+                    current=0,
+                    total=1,
+                    message="Preview failed",
+                    error=str(exc),
+                )
+
+        thread = threading.Thread(target=runner, daemon=True, name=f"preview-{job_id}")
+        _preview_threads[job_id] = thread
+        thread.start()
+
+    return read_preview_progress(job_id)
 
 
 def preview_summary(job_id: str) -> dict[str, Any]:
