@@ -135,14 +135,29 @@ async function loadPreview(id) {
   updateNextButton();
 
   const startRes = await fetch(`/api/jobs/${id}/preview/start`, { method: "POST" });
-  const startData = await startRes.json().catch(() => ({}));
-  if (!startRes.ok) throw new Error(startData.detail || "Failed to start preview");
+  const startText = await startRes.text();
+  let startData = {};
+  try {
+    startData = startText ? JSON.parse(startText) : {};
+  } catch (_) {
+    throw new Error(startText || "Failed to start preview");
+  }
+  if (!startRes.ok) {
+    throw new Error(startData.detail || startText || "Failed to start preview");
+  }
 
   let data = null;
   for (;;) {
     const res = await fetch(`/api/jobs/${id}/preview/progress`);
-    const prog = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(prog.detail || "Preview progress failed");
+    const text = await res.text();
+    let prog = {};
+    try {
+      prog = text ? JSON.parse(text) : {};
+    } catch (_) {
+      await sleep(200);
+      continue;
+    }
+    if (!res.ok) throw new Error(prog.detail || text || "Preview progress failed");
 
     setProgress(
       true,

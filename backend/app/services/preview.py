@@ -86,6 +86,14 @@ def _result_path(job_id: str):
     return zip_ingest.job_dir(job_id) / "preview_result.json"
 
 
+def _atomic_write_text(path, text: str) -> None:
+    """Write via temp file + replace to avoid empty-file race on concurrent reads."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
 def write_preview_progress(
     job_id: str,
     *,
@@ -105,25 +113,53 @@ def write_preview_progress(
         "message": message,
         "error": error,
     }
-    _progress_path(job_id).write_text(json.dumps(payload))
+    _atomic_write_text(_progress_path(job_id), json.dumps(payload))
 
 
 def read_preview_progress(job_id: str) -> dict[str, Any]:
     path = _progress_path(job_id)
+    idle = {
+        "job_id": job_id,
+        "state": "idle",
+        "current": 0,
+        "total": 0,
+        "percent": 0,
+        "message": "",
+        "error": None,
+        "result": None,
+    }
     if not path.exists():
-        return {
-            "job_id": job_id,
-            "state": "idle",
-            "current": 0,
-            "total": 0,
-            "percent": 0,
-            "message": "",
-            "error": None,
-            "result": None,
-        }
-    data = json.loads(path.read_text())
-    if data.get("state") == "done" and _result_path(job_id).exists():
-        data["result"] = json.loads(_result_path(job_id).read_text())
+        return idle
+
+    data = None
+    for _ in range(8):
+        try:
+            raw = path.read_text()
+            if not raw.strip():
+                continue
+            data = json.loads(raw)
+            break
+        except (OSError, json.JSONDecodeError):
+            continue
+    if data is None:
+        return idle
+
+    if data.get("state") == "done":
+        result_path = _result_path(job_id)
+        if result_path.exists():
+            for _ in range(8):
+                try:
+                    raw = result_path.read_text()
+                    if not raw.strip():
+                        continue
+                    data["result"] = json.loads(raw)
+                    break
+                except (OSError, json.JSONDecodeError):
+                    continue
+            else:
+                data["result"] = None
+        else:
+            data["result"] = None
     else:
         data["result"] = None
     return data
@@ -298,7 +334,7 @@ def start_preview_job(job_id: str) -> dict[str, Any]:
                     )
 
                 result = build_preview(job_id, progress_cb=cb)
-                _result_path(job_id).write_text(result.model_dump_json())
+                _atomic_write_text(_result_path(job_id), result.model_dump_json())
                 write_preview_progress(
                     job_id,
                     state="done",
