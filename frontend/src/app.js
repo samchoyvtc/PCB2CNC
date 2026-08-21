@@ -9,8 +9,7 @@ const layerTogglesEl = document.getElementById("layer-toggles");
 const bomPanelEl = document.getElementById("bom-panel");
 const downloadsEl = document.getElementById("downloads");
 const toolpathImg = document.getElementById("toolpath-preview");
-const btnGenerate = document.getElementById("btn-generate");
-const btnGenerateMachine = document.getElementById("btn-generate-machine");
+const btnNext = document.getElementById("btn-next");
 const btnReset = document.getElementById("btn-reset");
 const fileInput = document.getElementById("file-input");
 const settingsForm = document.getElementById("settings-form");
@@ -29,8 +28,16 @@ const pills = {
   4: document.getElementById("pill-4"),
 };
 
+const NEXT_LABELS = {
+  1: "Next step · Machine",
+  2: "Next step · Generate",
+  3: "Next step · Convert",
+  4: "Done · Convert ready",
+};
+
 let jobId = null;
 let currentStage = 1;
+let busy = false;
 const board = new BoardPreview(document.getElementById("board-canvas"));
 
 function setStatus(message, kind = "") {
@@ -38,9 +45,9 @@ function setStatus(message, kind = "") {
   statusEl.className = `status ${kind}`.trim();
 }
 
-function setGenerateEnabled(enabled) {
-  btnGenerate.disabled = !enabled;
-  btnGenerateMachine.disabled = !enabled;
+function updateNextButton() {
+  btnNext.textContent = NEXT_LABELS[currentStage] || "Next step";
+  btnNext.disabled = !jobId || busy || currentStage >= 4;
 }
 
 function setResetEnabled(enabled) {
@@ -59,6 +66,7 @@ function setProgress(visible, percent = 0, label = "", meta = "") {
 function resetJob() {
   jobId = null;
   currentStage = 1;
+  busy = false;
   fileInput.value = "";
   fileListEl.innerHTML = "";
   layerTogglesEl.innerHTML = "";
@@ -66,7 +74,6 @@ function resetJob() {
   showToolpathPreview(toolpathImg, null);
   renderBomTable(bomPanelEl, [], null);
   board.clear();
-  setGenerateEnabled(false);
   setResetEnabled(false);
   setProgress(false);
   setStage(1);
@@ -81,6 +88,7 @@ function setStage(n) {
     el.classList.toggle("active", stage <= n);
     el.classList.toggle("is-locked", !jobId && stage > 1);
   });
+  updateNextButton();
 }
 
 function showPanel(tab) {
@@ -125,6 +133,8 @@ function sleep(ms) {
 async function loadPreview(id) {
   setStatus("Building colored layer preview…");
   setProgress(true, 0, "Starting preview…", "0%");
+  busy = true;
+  updateNextButton();
 
   const startRes = await fetch(`/api/jobs/${id}/preview/start`, { method: "POST" });
   const startData = await startRes.json().catch(() => ({}));
@@ -177,14 +187,16 @@ async function loadPreview(id) {
   setTimeout(() => setProgress(false), 600);
   setStage(1);
   showPanel("layers");
-  setGenerateEnabled(true);
+  busy = false;
   setResetEnabled(true);
+  updateNextButton();
 }
 
 async function onZip(file) {
   try {
     setStatus(`Uploading ${file.name}…`);
-    setGenerateEnabled(false);
+    busy = true;
+    updateNextButton();
     downloadsEl.innerHTML = "";
     showToolpathPreview(toolpathImg, null);
     renderBomTable(bomPanelEl, [], null);
@@ -198,7 +210,8 @@ async function onZip(file) {
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
-    setGenerateEnabled(false);
+    busy = false;
+    updateNextButton();
     setProgress(false);
   }
 }
@@ -209,7 +222,8 @@ async function runGenerate() {
     showPanel("machine");
     setStage(3);
     setStatus("Stage 3 · Generating CNC G-code…");
-    setGenerateEnabled(false);
+    busy = true;
+    updateNextButton();
     const settings = readSettings(settingsForm);
     const result = await generateJob(jobId, settings);
     renderDownloads(downloadsEl, jobId, result.files);
@@ -221,7 +235,26 @@ async function runGenerate() {
     setStatus(err.message || String(err), "error");
     setStage(2);
   } finally {
-    setGenerateEnabled(!!jobId);
+    busy = false;
+    updateNextButton();
+  }
+}
+
+async function nextStep() {
+  if (!jobId || busy) return;
+  if (currentStage <= 1) {
+    goMachine();
+    setStatus("Stage 2 · Configure machine settings, then press Next step", "ok");
+    return;
+  }
+  if (currentStage === 2) {
+    await runGenerate();
+    return;
+  }
+  if (currentStage === 3) {
+    showPanel("machine");
+    setStage(4);
+    setStatus("Stage 4 · Download converted .nc files below", "ok");
   }
 }
 
@@ -253,12 +286,10 @@ document.getElementById("btn-fit").addEventListener("click", () => board.fit());
 document.getElementById("btn-zoom-in").addEventListener("click", () => board.zoom(1.2));
 document.getElementById("btn-zoom-out").addEventListener("click", () => board.zoom(1 / 1.2));
 
-btnGenerate.addEventListener("click", () => {
-  goMachine();
-  runGenerate();
-});
-btnGenerateMachine.addEventListener("click", runGenerate);
+btnNext.addEventListener("click", nextStep);
 btnReset.addEventListener("click", () => {
   resetJob();
   fileInput.click();
 });
+
+updateNextButton();
