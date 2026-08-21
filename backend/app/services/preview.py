@@ -14,17 +14,17 @@ logger = logging.getLogger(__name__)
 
 LAYER_COLORS: dict[str, tuple[str, tuple[int, int, int, int], bool]] = {
     # kind: (css_hex, rgba, visible_default)
-    "copper_top": ("#F5A623", (245, 166, 35, 230), True),
-    "copper_bottom": ("#C47A12", (196, 122, 18, 180), False),
+    "copper_top": ("#EF4444", (239, 68, 68, 230), True),
+    "copper_bottom": ("#2563EB", (37, 99, 235, 200), False),
     "profile": ("#94A3B8", (148, 163, 184, 220), True),
-    "soldermask_top": ("#22C55E", (34, 197, 94, 90), False),
-    "soldermask_bottom": ("#16A34A", (22, 163, 74, 70), False),
-    "silkscreen_top": ("#E5E7EB", (229, 231, 235, 200), False),
-    "silkscreen_bottom": ("#9CA3AF", (156, 163, 175, 160), False),
-    "solderpaste_top": ("#A78BFA", (167, 139, 250, 120), False),
-    "solderpaste_bottom": ("#8B5CF6", (139, 92, 246, 100), False),
+    "soldermask_top": ("#86EFAC", (134, 239, 172, 140), False),
+    "soldermask_bottom": ("#166534", (22, 101, 52, 160), False),
+    "silkscreen_top": ("#D1D5DB", (209, 213, 219, 210), False),
+    "silkscreen_bottom": ("#4B5563", (75, 85, 99, 200), False),
+    "solderpaste_top": ("#E9D5FF", (233, 213, 255, 180), False),
+    "solderpaste_bottom": ("#6B21A8", (107, 33, 168, 180), False),
     "gerber_other": ("#60A5FA", (96, 165, 250, 160), False),
-    "drill": ("#EF4444", (239, 68, 68, 255), True),
+    "drill": ("#F97316", (249, 115, 22, 255), True),
 }
 
 
