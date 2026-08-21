@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gerber CNC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #0b1220;
+      --bg1: #121a2b;
+      --bg2: #1a2438;
+      --line: #2a3650;
+      --text: #e8eef9;
+      --muted: #93a0b8;
+      --accent: #f5a623;
+      --accent2: #38bdf8;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --panel: rgba(18, 26, 43, 0.92);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "DM Sans", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(245, 166, 35, 0.14), transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, rgba(56, 189, 248, 0.12), transparent 50%),
+        linear-gradient(165deg, var(--bg0), #0f172a 45%, #111827);
+    }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(11, 18, 32, 0.75);
+      backdrop-filter: blur(10px);
+    }
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      letter-spacing: -0.02em;
+      font-weight: 700;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .stages {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .stage-pill {
+      font-size: 0.75rem;
+      padding: 0.35rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--bg1);
+    }
+    .stage-pill.active {
+      color: #111;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 320px 1fr 300px;
+      gap: 1rem;
+      padding: 1rem;
+      min-height: 0;
+    }
+    @media (max-width: 1100px) {
+      main { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1rem;
+      min-height: 0;
+    }
+    .panel h2 {
+      margin: 0 0 0.75rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    #dropzone {
+      border: 1.5px dashed #3b4b6b;
+      border-radius: 12px;
+      padding: 1.5rem 1rem;
+      text-align: center;
+      background:
+        linear-gradient(180deg, rgba(56, 189, 248, 0.06), transparent),
+        var(--bg2);
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    #dropzone.dragover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    #dropzone strong { color: var(--accent); display: block; margin-bottom: 0.35rem; }
+    #dropzone span { color: var(--muted); font-size: 0.85rem; }
+    #file-list {
+      list-style: none;
+      margin: 0.9rem 0 0;
+      padding: 0;
+      max-height: 180px;
+      overflow: auto;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+    }
+    #file-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid rgba(42, 54, 80, 0.7);
+      color: var(--muted);
+    }
+    #file-list .kind { color: var(--accent2); }
+    .status {
+      margin-top: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-height: 1.2em;
+    }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--ok); }
+    .viewer-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      min-height: 520px;
+    }
+    .viewer-toolbar {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    button, .btn {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--bg2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 0.55rem 0.9rem;
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary {
+      background: linear-gradient(180deg, #ffb84a, var(--accent));
+      color: #1a1205;
+      border-color: #e09410;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #canvas-host {
+      position: relative;
+      flex: 1;
+      min-height: 420px;
+      border-radius: 12px;
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(42,54,80,0.35) 1px, transparent 1px) 0 0 / 24px 24px,
+        linear-gradient(rgba(42,54,80,0.35) 1px, transparent 1px) 0 0 / 24px 24px,
+        #070b14;
+      border: 1px solid var(--line);
+    }
+    #board-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+      touch-action: none;
+    }
+    #board-canvas.panning { cursor: grabbing; }
+    #layer-toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    #layer-toggles label {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.2);
+      flex: 0 0 auto;
+    }
+    .field {
+      display: grid;
+      gap: 0.25rem;
+      margin-bottom: 0.7rem;
+    }
+    .field label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .field input {
+      width: 100%;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--bg0);
+      color: var(--text);
+      padding: 0.5rem 0.65rem;
+      font: inherit;
+    }
+    #downloads {
+      list-style: none;
+      margin: 0.75rem 0 0;
+      padding: 0;
+    }
+    #downloads a {
+      color: var(--accent2);
+      text-decoration: none;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.8rem;
+    }
+    #toolpath-preview {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #070b14;
+      margin-top: 0.75rem;
+      display: none;
+    }
+    #toolpath-preview.visible { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Gerber CNC</h1>
+      <p>Zip in → colored preview → G-code out</p>
+    </div>
+    <div class="stages">
+      <span class="stage-pill active" id="pill-1">1 Preview</span>
+      <span class="stage-pill" id="pill-2">2 Generate</span>
+      <span class="stage-pill" id="pill-3">3 Convert</span>
+    </div>
+  </header>
+  <main>
+    <aside class="panel">
+      <h2>Input</h2>
+      <div id="dropzone" tabindex="0" role="button" aria-label="Upload Gerber zip">
+        <strong>Drop CAM zip here</strong>
+        <span>or click to choose · Gerber + Excellon</span>
+        <input id="file-input" type="file" accept=".zip,application/zip" hidden />
+      </div>
+      <ul id="file-list"></ul>
+      <div class="status" id="status">Waiting for zip…</div>
+    </aside>
+
+    <section class="panel viewer-wrap">
+      <h2>Board preview</h2>
+      <div class="viewer-toolbar">
+        <button type="button" id="btn-fit">Fit</button>
+        <button type="button" id="btn-zoom-in">Zoom +</button>
+        <button type="button" id="btn-zoom-out">Zoom −</button>
+        <button type="button" class="primary" id="btn-generate" disabled>Generate G-code</button>
+      </div>
+      <div id="canvas-host">
+        <canvas id="board-canvas"></canvas>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <h2>Layers</h2>
+      <ul id="layer-toggles"></ul>
+
+      <h2 style="margin-top:1.25rem">Machine</h2>
+      <form id="settings-form">
+        <div class="field">
+          <label for="engraving_depth_mm">Engrave depth (mm)</label>
+          <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
+        </div>
+        <div class="field">
+          <label for="feed_mm_min">Feed (mm/min)</label>
+          <input id="feed_mm_min" name="feed_mm_min" type="number" step="10" value="2000" />
+        </div>
+        <div class="field">
+          <label for="spindle_rpm">Spindle RPM</label>
+          <input id="spindle_rpm" name="spindle_rpm" type="number" step="100" value="12000" />
+        </div>
+        <div class="field">
+          <label for="safe_z_mm">Safe Z (mm)</label>
+          <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
+        </div>
+        <div class="field">
+          <label for="stock_thickness_mm">Stock thickness (mm)</label>
+          <input id="stock_thickness_mm" name="stock_thickness_mm" type="number" step="0.1" value="1.5" />
+        </div>
+      </form>
+
+      <h2 style="margin-top:1.25rem">Output</h2>
+      <ul id="downloads"></ul>
+      <img id="toolpath-preview" alt="Toolpath verification preview" />
+    </aside>
+  </main>
+
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>

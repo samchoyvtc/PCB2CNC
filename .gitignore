@@ -1,0 +1,7 @@
+data/jobs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.png
+.DS_Store

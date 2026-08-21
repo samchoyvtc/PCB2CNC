@@ -1,0 +1,24 @@
+{
+    "Header": {
+        "Comment": "All values are metric (mm)",
+        "CreationDate": "2026-05-08T18:38:51Z",
+        "GenerationSoftware": {
+            "Application": "Fusion Electronics",
+            "Vendor": "Autodesk",
+            "Version": "9.7.0"
+        },
+        "Part": "Single"
+    },
+    "Overall": {
+        "BoardThickness": 1.6608,
+        "LayerNumber": 2,
+        "Name": {
+            "ProjectId": "PCB v0"
+        },
+        "Owner": "Choy Shu Sang <sam.choy@vtc.edu.hk>",
+        "Size": {
+            "X": 35.54,
+            "Y": 36.5
+        }
+    }
+}
