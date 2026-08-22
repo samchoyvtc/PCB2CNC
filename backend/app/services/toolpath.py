@@ -223,6 +223,25 @@ def _cam_by_kind(job_id: str) -> dict[str, Path]:
     return out
 
 
+def _resolve_pocket_outline(
+    job_id: str,
+    op,
+    outline_fallback: str | None = None,
+) -> str:
+    """Prefer the profile Gerber so pocket is bounded by the board, not copper."""
+    files = zip_ingest.list_cam_files(job_id)
+    by_name = {meta["name"]: meta["kind"] for meta in files}
+    profile = next((meta["name"] for meta in files if meta["kind"] == "profile"), None)
+    chosen = op.outline_layer or outline_fallback
+    if chosen and by_name.get(chosen) == "profile":
+        return chosen
+    if profile and profile != op.layer:
+        return profile
+    if chosen and chosen != op.layer and chosen in by_name:
+        return chosen
+    raise ValueError("Pocket engraving needs a board outline layer")
+
+
 def _pcb2gcode_available() -> bool:
     return shutil.which("pcb2gcode") is not None
 
@@ -596,12 +615,16 @@ def _pocket_paths(
         cv2.MORPH_ELLIPSE, (step_px * 2 + 1, step_px * 2 + 1)
     )
     keep = cv2.dilate(copper, radius_k, iterations=1)
-    clear = cv2.bitwise_and(
-        cv2.erode(board, radius_k, iterations=1), cv2.bitwise_not(keep)
-    )
+    inset_board = cv2.erode(board, radius_k, iterations=1)
+    clear = cv2.bitwise_and(inset_board, cv2.bitwise_not(keep))
     work = clear
     paths: list[list[tuple[float, float]]] = []
     min_pixels = max(4, int((dpmm * 0.15) ** 2))
+    outline_loops = _mask_to_paths(
+        inset_board, bounds, dpmm, retrieve=cv2.RETR_EXTERNAL
+    )
+    if outline_loops:
+        paths.append(max(outline_loops, key=_path_length))
     for _ in range(80):
         if cv2.countNonZero(work) < min_pixels:
             break
@@ -681,6 +704,46 @@ def _builtin_generate(
     return produced
 
 
+def _emit_copper_nc(
+    job_id: str,
+    op,
+    settings: MachineSettings,
+    out_dir: Path,
+    filename: str,
+    *,
+    outline_fallback: str | None = None,
+) -> str:
+    """Write isolation or pocket G-code for one copper layer."""
+    copper_file = _cam_by_name(job_id, op.layer)
+    copper_settings = _settings_for_tool(settings, op.tool_number)
+    bottom = "bottom" in filename.lower()
+    if op.engrave_mode == "pocket":
+        outline_name = _resolve_pocket_outline(job_id, op, outline_fallback)
+        paths, _ = _pocket_paths(
+            copper_file,
+            op.tool_number,
+            outline_path=_cam_by_name(job_id, outline_name),
+        )
+        operation = "Pocket Engraving (bottom)" if bottom else "Pocket Engraving"
+    else:
+        offsets = _isolation_offsets_px(op.tool_number, op.isolation_passes)
+        paths, _ = _isolation_paths(copper_file, offsets)
+        operation = (
+            "Isolation Engraving (bottom)" if bottom else "Isolation Engraving"
+        )
+    write_path_nc(
+        out_dir / filename,
+        paths,
+        settings=copper_settings,
+        operation=operation,
+        tool_number=op.tool_number,
+        depth_mm=op.depth_mm or settings.engraving_depth_mm,
+        include_header=True,
+        step_down_mm=copper_settings.step_down_mm,
+    )
+    return filename
+
+
 def _plan_generate(
     job_id: str,
     settings: MachineSettings,
@@ -692,42 +755,29 @@ def _plan_generate(
     out_dir.mkdir(parents=True, exist_ok=True)
     produced: list[str] = []
     tool_rows = tool_library.load_tool_library().get("tools") or []
-
+    outline_fallback = plan.outline.layer if plan.outline else None
     if plan.copper:
-        copper_file = _cam_by_name(job_id, plan.copper.layer)
-        copper_settings = _settings_for_tool(settings, plan.copper.tool_number)
-        if plan.copper.engrave_mode == "pocket":
-            outline_name = plan.copper.outline_layer or (
-                plan.outline.layer if plan.outline else None
+        produced.append(
+            _emit_copper_nc(
+                job_id,
+                plan.copper,
+                settings,
+                out_dir,
+                "isolation.nc",
+                outline_fallback=outline_fallback,
             )
-            if not outline_name:
-                raise ValueError(
-                    "Pocket engraving needs a board outline layer"
-                )
-            paths, _ = _pocket_paths(
-                copper_file,
-                plan.copper.tool_number,
-                outline_path=_cam_by_name(job_id, outline_name),
-            )
-            operation = "Pocket Engraving"
-        else:
-            offsets = _isolation_offsets_px(
-                plan.copper.tool_number,
-                plan.copper.isolation_passes,
-            )
-            paths, _ = _isolation_paths(copper_file, offsets)
-            operation = "Isolation Engraving"
-        write_path_nc(
-            out_dir / "isolation.nc",
-            paths,
-            settings=copper_settings,
-            operation=operation,
-            tool_number=plan.copper.tool_number,
-            depth_mm=plan.copper.depth_mm or settings.engraving_depth_mm,
-            include_header=True,
-            step_down_mm=copper_settings.step_down_mm,
         )
-        produced.append("isolation.nc")
+    if plan.copper_bottom:
+        produced.append(
+            _emit_copper_nc(
+                job_id,
+                plan.copper_bottom,
+                settings,
+                out_dir,
+                "isolation_bottom.nc",
+                outline_fallback=outline_fallback,
+            )
+        )
 
     drill_ops = [op for op in plan.drills if op.layers]
     for index, drill_op in enumerate(drill_ops):
@@ -824,9 +874,12 @@ def generate_toolpaths(
     plan: GeneratePlan | None = None,
 ) -> dict[str, Any]:
     settings = settings or MachineSettings()
-    engrave_depth = settings.engraving_depth_mm
-    if plan is not None and plan.copper and plan.copper.depth_mm:
-        engrave_depth = plan.copper.depth_mm
+    copper_depths = [settings.engraving_depth_mm]
+    if plan is not None:
+        for op in (plan.copper, plan.copper_bottom):
+            if op and op.depth_mm:
+                copper_depths.append(op.depth_mm)
+    engrave_depth = max(copper_depths)
     if engrave_depth > settings.drill_depth_mm:
         raise ValueError("Copper engrave depth exceeds drill depth")
     settings.spindle_rpm = max(1000, min(settings.spindle_rpm, 60000))
@@ -1154,6 +1207,7 @@ def render_toolpath_preview(
 
     colors = {
         "isolation.nc": (245, 166, 35, 255),
+        "isolation_bottom.nc": (37, 99, 235, 255),
         "outline.nc": (148, 163, 184, 255),
         "all.nc": (96, 165, 250, 120),
     }

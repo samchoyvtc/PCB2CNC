@@ -53,6 +53,12 @@ def test_nc_job_sequence_reads_tool_changes():
             "file": "isolation.nc",
         }
     ]
+    bottom = nc_job_sequence(
+        "; Isolation Engraving (bottom)\nT2 M6\nM5\n",
+        "isolation_bottom.nc",
+    )
+    assert bottom[0]["job"] == "Copper bottom engraving"
+    assert bottom[0]["detail"] == "Isolation"
     drill = nc_job_sequence(
         "; 2D Drilling\n"
         "; T3 holes Ø 0.8 mm drill (4)\nT3 M6\n"
@@ -504,7 +510,132 @@ def test_copper_pocket_vs_contour_gcode():
 
 
 @pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")
-def test_copper_pocket_requires_outline_layer():
+def test_generate_copper_bottom_same_process():
+    uploaded = client.post(
+        "/api/jobs/upload",
+        files={"file": ("simple.zip", SIMPLE_ZIP.read_bytes(), "application/zip")},
+    )
+    assert uploaded.status_code == 200
+    payload = uploaded.json()
+    job_id = payload["job_id"]
+    copper_top = next(item["name"] for item in payload["files"] if item["kind"] == "copper_top")
+    copper_bottom = next(
+        item["name"] for item in payload["files"] if item["kind"] == "copper_bottom"
+    )
+    settings = {"engraving_depth_mm": 0.15, "drill_depth_mm": 1.6}
+
+    both = client.post(
+        f"/api/jobs/{job_id}/generate",
+        json={
+            "settings": settings,
+            "plan": {
+                "copper": {
+                    "layer": copper_top,
+                    "tool_number": 2,
+                    "engrave_mode": "contour",
+                },
+                "copper_bottom": {
+                    "layer": copper_bottom,
+                    "tool_number": 2,
+                    "engrave_mode": "contour",
+                },
+            },
+        },
+    )
+    assert both.status_code == 200, both.text
+    names = both.json()["files"]
+    assert "isolation.nc" in names
+    assert "isolation_bottom.nc" in names
+    top_nc = client.get(f"/api/jobs/{job_id}/nc/isolation.nc")
+    bot_nc = client.get(f"/api/jobs/{job_id}/nc/isolation_bottom.nc")
+    assert top_nc.status_code == 200
+    assert bot_nc.status_code == 200
+    assert b"Isolation Engraving" in top_nc.content
+    assert b"Isolation Engraving (bottom)" in bot_nc.content
+    assert top_nc.content != bot_nc.content
+    assert any(path["file"] == "isolation_bottom.nc" for path in both.json()["paths"])
+
+    preview = client.post(
+        f"/api/jobs/{job_id}/preview-path",
+        json={
+            "settings": settings,
+            "plan": {
+                "copper_bottom": {
+                    "layer": copper_bottom,
+                    "tool_number": 2,
+                    "engrave_mode": "contour",
+                }
+            },
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["paths"]
+    assert all(
+        path["file"] == "isolation_bottom.nc" for path in preview.json()["paths"]
+    )
+
+    pocket = client.post(
+        f"/api/jobs/{job_id}/generate",
+        json={
+            "settings": settings,
+            "plan": {
+                "copper_bottom": {
+                    "layer": copper_bottom,
+                    "tool_number": 2,
+                    "engrave_mode": "pocket",
+                }
+            },
+        },
+    )
+    assert pocket.status_code == 200, pocket.text
+    pocket_nc = client.get(f"/api/jobs/{job_id}/nc/isolation_bottom.nc")
+    assert pocket_nc.status_code == 200
+    assert b"Pocket Engraving (bottom)" in pocket_nc.content
+    assert "isolation.nc" not in pocket.json()["files"]
+    xs = [
+        pt[0]
+        for path in pocket.json()["paths"]
+        if path.get("kind") == "cut"
+        for pt in path["points"]
+    ]
+    ys = [
+        pt[1]
+        for path in pocket.json()["paths"]
+        if path.get("kind") == "cut"
+        for pt in path["points"]
+    ]
+    assert min(xs) <= 0.5
+    assert max(xs) >= 35.0
+    assert min(ys) <= 0.5
+    assert max(ys) >= 36.0
+
+
+@pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")
+def test_pocket_includes_board_outline_for_other_copper_layer():
+    import zipfile
+    import tempfile
+    from pathlib import Path
+
+    from app.services import parser
+    from app.services.toolpath import _pocket_paths
+
+    with tempfile.TemporaryDirectory() as tmp:
+        zipfile.ZipFile(SIMPLE_ZIP).extractall(tmp)
+        root = Path(tmp)
+        profile = next(root.rglob("profile.gbr"))
+        silk = next(root.rglob("silkscreen_top.gbr"))
+        outline = parser.parse_gerber_bounds(profile)
+        paths, _ = _pocket_paths(silk, 2, outline_path=profile, dpmm=20)
+    xs = [pt[0] for path in paths for pt in path]
+    ys = [pt[1] for path in paths for pt in path]
+    assert min(xs) <= outline.min_x + 0.6
+    assert max(xs) >= outline.max_x - 0.6
+    assert min(ys) <= outline.min_y + 0.6
+    assert max(ys) >= outline.max_y - 0.6
+
+
+@pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")
+def test_copper_pocket_uses_profile_when_outline_omitted():
     uploaded = client.post(
         "/api/jobs/upload",
         files={"file": ("simple.zip", SIMPLE_ZIP.read_bytes(), "application/zip")},
@@ -525,8 +656,15 @@ def test_copper_pocket_requires_outline_layer():
             },
         },
     )
-    assert result.status_code == 400
-    assert "outline" in result.json()["detail"].lower()
+    assert result.status_code == 200, result.text
+    xs = [
+        pt[0]
+        for path in result.json()["paths"]
+        if path.get("kind") == "cut"
+        for pt in path["points"]
+    ]
+    assert min(xs) <= 0.5
+    assert max(xs) >= 35.0
 
 
 def test_drill_strategy_defaults_to_drill():

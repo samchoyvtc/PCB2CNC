@@ -1,6 +1,6 @@
 # PCB Gerber-to-G-code MVP Plan
 
-**Version 0.4.1** — Stage 4 Convert is in; contour isolation follows pour slots as well as copper islands.
+**Version 0.4.2** — One copper side per job (top or bottom Layer); pocket uses the profile Gerber; the canvas follows the selected Layer.
 
 ## Goal
 
@@ -26,6 +26,7 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 ### Stage 3 — Generate CNC paths
 - Right-hand settings column; the Stage 1 board preview stays on the left (~60% / 40%).
 - **Preview** on each process card overlays that job’s toolpaths on the board (toggle on/off).
+- Changing **Layer** on copper engraving shows that Gerber on the canvas (other copper/silk/mask layers hide; profile stays on).
 - **Hide rapids** switch appears here (and on Convert) once paths exist; on by default so G0 travel is hidden.
 - Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
 - Isolation follows copper **outer** contours and slots cut into large pours (Euclidean offset by tip radius). Pad drill holes are not cut as paths. Long outlines are not thinned to a 400-point cap, so chords do not cut through pads.
@@ -35,6 +36,7 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a selected board outline, leaving traces).
 - Fields, top to bottom: Strategy, Layer, Board outline (pocket only), Tool (default T2), Engraving depth (default `0.15 mm`), Isolation passes (contour only).
 - Extra contour passes step farther out using the tool’s step-over.
+- Layer can be copper top or copper bottom (one side per job). Same contour/pocket process in board XY (no X-mirror). Pocket always uses the profile Gerber as the board outline, even if that field is omitted.
 
 **2 · PCB drilling**
 - Drill depth (default `1.6 mm`) and one or more Excellon files.
@@ -58,7 +60,7 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 
 ## Scope (current)
 
-- Single-sided PCB job flow only (Top side only).
+- One copper side per job: pick copper top or copper bottom in **1 · PCB copper trace engraving**.
 - Inputs:
   - Gerber RS-274X signal layer (from zip).
   - Excellon drill file.
@@ -96,7 +98,7 @@ Other library materials (copper, aluminum, wood, etc.) are ignored.
 2. Render and preview layers on canvas (zoom, pan, fit-to-view, color toggles).
 3. Open Board setting: confirm stock size, depths, and Safe Position.
 4. Pick a tool from the 5-column list; remaining values appear in **Tool properties**.
-5. Generate: assign layer/tool/strategy per process and Preview on the board (Hide rapids on if travel cluttered).
+5. Generate: pick copper Layer (top or bottom), tool, and strategy; the canvas shows that Gerber. Preview the CNC path (Hide rapids on if travel cluttered).
 6. Convert: inspect mill order or G-code, then download `.nc`.
 
 ## Proposed Architecture
@@ -179,5 +181,5 @@ flowchart LR
 
 - Stage 1: Dropping a sample Gerber zip shows copper + profile + drills with colors.
 - Stage 2: Board setting lists the six PAEN tools; selecting one shows PCB properties.
-- Stage 3: Preview overlays isolation (copper-following), drill/pocket holes, and outside outline with tabs; Hide rapids works on this stage only after paths exist.
+- Stage 3: Layer switches the Gerber on the canvas; Preview overlays isolation (copper-following or pocket inside the profile), drill/pocket holes, and outside outline with tabs; Hide rapids works on this stage only after paths exist.
 - Stage 4: Convert writes `isolation.nc`, `drill.nc`, `outline.nc`, and `all.nc`; mill order and G-code are inspectable; files download.

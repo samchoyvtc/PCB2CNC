@@ -259,43 +259,70 @@ function renderDrillBlock(preview, tools, { depthMm = 1.6 } = {}) {
   return section;
 }
 
-function copperMode(root) {
-  return root.querySelector('input[name="gen-copper-mode"]:checked')?.value === "pocket"
+function copperMode(card) {
+  return card.querySelector(".gen-copper-mode:checked")?.value === "pocket"
     ? "pocket"
     : "contour";
 }
 
-function copperPasses(root) {
-  const passes = Number(root.querySelector("#gen-copper-passes")?.value);
+function copperPasses(card) {
+  const passes = Number(card.querySelector(".gen-copper-passes")?.value);
   return Number.isFinite(passes) && passes >= 1 ? Math.min(12, Math.round(passes)) : 1;
 }
 
-function copperDepthMm(root) {
-  const n = Number(root.querySelector("#gen-copper-depth")?.value);
+function copperDepthMm(card) {
+  const n = Number(card.querySelector(".gen-copper-depth")?.value);
   return Number.isFinite(n) && n > 0 ? Math.min(5, n) : 0.15;
 }
 
-function copperPlanFields(root) {
-  const layer = root.querySelector("#gen-copper-layer")?.value;
-  const tool = Number(root.querySelector("#gen-copper-tool")?.value);
-  const mode = copperMode(root);
-  const outlineLayer = root.querySelector("#gen-copper-outline")?.value || null;
+function profileOption(selectEl, copperName) {
+  if (!selectEl?.options?.length) return null;
+  const profileOpt = [...selectEl.options].find((opt) =>
+    /·\s*profile\s*$/i.test(opt.textContent || "")
+  );
+  if (profileOpt && profileOpt.value !== copperName) return profileOpt;
+  return (
+    [...selectEl.options].find((opt) => opt.value && opt.value !== copperName) ||
+    profileOpt ||
+    null
+  );
+}
+
+function copperPlanFields(card, root) {
+  if (!card || card.hidden) return null;
+  const layer = card.querySelector(".gen-copper-layer")?.value;
+  const tool = Number(card.querySelector(".gen-copper-tool")?.value);
+  const mode = copperMode(card);
+  const outlineSelect = card.querySelector(".gen-copper-outline");
+  const picked = profileOption(outlineSelect, layer);
+  const outlineLayer =
+    (picked && picked.value) ||
+    outlineSelect?.value ||
+    root.querySelector("#gen-outline-layer")?.value ||
+    null;
   if (!layer) return null;
   return {
     layer,
     tool_number: Number.isFinite(tool) ? tool : 2,
-    isolation_passes: copperPasses(root),
+    isolation_passes: copperPasses(card),
     engrave_mode: mode,
-    outline_layer: mode === "pocket" ? outlineLayer : null,
-    depth_mm: copperDepthMm(root),
+    outline_layer: mode === "pocket" && outlineLayer !== layer ? outlineLayer : null,
+    depth_mm: copperDepthMm(card),
   };
 }
 
-function syncCopperModeUi(root) {
-  const mode = copperMode(root);
-  const passesWrap = root.querySelector("#gen-copper-passes-wrap");
-  const outlineWrap = root.querySelector("#gen-copper-outline-wrap");
-  const hint = root.querySelector("#gen-copper-hint");
+function syncPocketOutline(card) {
+  const copper = card.querySelector(".gen-copper-layer");
+  const outline = card.querySelector(".gen-copper-outline");
+  const pick = profileOption(outline, copper?.value);
+  if (pick) outline.value = pick.value;
+}
+
+function syncCopperModeUi(card) {
+  const mode = copperMode(card);
+  const passesWrap = card.querySelector(".gen-copper-passes-wrap");
+  const outlineWrap = card.querySelector(".gen-copper-outline-wrap");
+  const hint = card.querySelector(".gen-copper-hint");
   if (passesWrap) passesWrap.hidden = mode === "pocket";
   if (outlineWrap) outlineWrap.hidden = mode !== "pocket";
   if (hint) {
@@ -306,16 +333,27 @@ function syncCopperModeUi(root) {
   }
 }
 
+function fillCopperCard(card, gerbers, tools, layerName, outlineName, settings) {
+  if (!card) return;
+  fillSelect(card.querySelector(".gen-copper-layer"), layerSelectHtml(gerbers, layerName));
+  fillSelect(card.querySelector(".gen-copper-tool"), toolSelectHtml(tools, 2));
+  fillSelect(card.querySelector(".gen-copper-outline"), layerSelectHtml(gerbers, outlineName));
+  const copperDepth = card.querySelector(".gen-copper-depth");
+  if (copperDepth) {
+    const fromSettings = Number(settings?.engraving_depth_mm);
+    if (Number.isFinite(fromSettings) && fromSettings > 0) {
+      copperDepth.value = String(fromSettings);
+    }
+  }
+  syncCopperModeUi(card);
+  syncPocketOutline(card);
+}
+
 function planForCard(root, kind, card) {
   if (kind === "copper") {
-    const copper = copperPlanFields(root);
+    const copper = copperPlanFields(card, root);
     if (!copper) return null;
-    if (copper.engrave_mode === "pocket" && !copper.outline_layer) return null;
-    return {
-      copper,
-      drills: [],
-      outline: null,
-    };
+    return { copper, drills: [], outline: null };
   }
   if (kind === "drill") {
     const layers = [...selectedNames(card)];
@@ -404,9 +442,7 @@ async function showCardPreview(root, btn) {
     ctx.setStatus?.(
       kind === "drill"
         ? "Select at least one drill file to preview."
-        : kind === "copper" && copperMode(root) === "pocket"
-          ? "Choose a board outline layer to pocket."
-          : "Choose a layer to preview.",
+        : "Choose a layer to preview.",
       "error"
     );
     return;
@@ -456,52 +492,52 @@ function bindPreviewClicks(root) {
   });
 }
 
-export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, onPathPreview } = {}) {
+export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, onPathPreview, onSelectLayer } = {}) {
   if (!root) return;
-  const copperLayer = root.querySelector("#gen-copper-layer");
-  const copperTool = root.querySelector("#gen-copper-tool");
-  const copperOutline = root.querySelector("#gen-copper-outline");
+  const copperCard = root.querySelector(".gen-copper-top") || root.querySelector(".gen-copper");
   const outlineLayer = root.querySelector("#gen-outline-layer");
   const outlineTool = root.querySelector("#gen-outline-tool");
   const drillsHost = root.querySelector("#gen-drills");
 
   const gerbers = gerberLayers(preview);
-  const copperDefault = defaultLayer(gerbers, ["copper_top"], 0);
+  const copperDefault = defaultLayer(gerbers, ["copper_top", "copper_bottom"], 0);
   const outlineDefault = defaultLayer(gerbers, ["profile"], gerbers.length ? gerbers.length - 1 : 0);
 
-  root._previewCtx = { getJobId, getSettings, setStatus, onPathPreview };
+  root._previewCtx = { getJobId, getSettings, setStatus, onPathPreview, onSelectLayer };
   bindPreviewClicks(root);
   root.querySelectorAll(".gen-preview-btn").forEach((btn) => {
     setPreviewPressed(btn, btn.closest(".gen-card"), false);
   });
 
-  fillSelect(copperLayer, layerSelectHtml(gerbers, copperDefault?.name));
-  fillSelect(copperTool, toolSelectHtml(tools, 2));
-  fillSelect(copperOutline, layerSelectHtml(gerbers, outlineDefault?.name));
+  const settings = getSettings?.() || {};
+  fillCopperCard(copperCard, gerbers, tools, copperDefault?.name, outlineDefault?.name, settings);
+  onSelectLayer?.(copperCard?.querySelector(".gen-copper-layer")?.value);
   fillSelect(outlineLayer, layerSelectHtml(gerbers, outlineDefault?.name));
   fillSelect(outlineTool, toolSelectHtml(tools, 4));
-  const copperDepth = root.querySelector("#gen-copper-depth");
   const outlineDepth = root.querySelector("#gen-outline-depth");
-  const settings = getSettings?.() || {};
-  if (copperDepth) {
-    const fromSettings = Number(settings.engraving_depth_mm);
-    if (Number.isFinite(fromSettings) && fromSettings > 0) {
-      copperDepth.value = String(fromSettings);
-    }
-  }
   if (outlineDepth) {
     const fromSettings = Number(settings.drill_depth_mm);
     if (Number.isFinite(fromSettings) && fromSettings > 0) {
       outlineDepth.value = String(fromSettings);
     }
   }
-  syncCopperModeUi(root);
   syncTabOffsetVisibility(root);
   setTabOffsetUi(root, tabOffsetFromRoot(root));
   if (!root.dataset.copperModeBound) {
     root.dataset.copperModeBound = "1";
     root.addEventListener("change", (event) => {
-      if (event.target?.name === "gen-copper-mode") syncCopperModeUi(root);
+      const card = event.target?.closest(".gen-copper");
+      if (!card) return;
+      if (event.target?.classList.contains("gen-copper-mode")) syncCopperModeUi(card);
+      if (
+        event.target?.classList.contains("gen-copper-layer") ||
+        event.target?.classList.contains("gen-copper-mode")
+      ) {
+        syncPocketOutline(card);
+      }
+      if (event.target?.classList.contains("gen-copper-layer")) {
+        root._previewCtx?.onSelectLayer?.(event.target.value);
+      }
     });
   }
   if (!root.dataset.tabOffsetBound) {
@@ -541,7 +577,7 @@ export function mountGenerateForm(root, { preview, tools, getJobId, getSettings,
 }
 
 export function readGeneratePlan(root) {
-  const copper = copperPlanFields(root);
+  const copper = copperPlanFields(root.querySelector(".gen-copper"), root);
   const outlineLayer = root.querySelector("#gen-outline-layer")?.value;
 
   const drills = [...root.querySelectorAll(".gen-drill")].map((block) => {

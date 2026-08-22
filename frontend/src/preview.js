@@ -213,6 +213,14 @@ export class BoardPreview {
     this.draw();
   }
 
+  showSelectedLayer(name) {
+    if (!name) return;
+    for (const layer of this.layers) {
+      this.visibility[layer.name] = layer.name === name || layer.kind === "profile";
+    }
+    this.draw();
+  }
+
   setToolpaths(paths) {
     this.toolpaths = Array.isArray(paths) ? paths : [];
     this._syncRapidToggle();
@@ -722,4 +730,19 @@ export function renderLayerToggles(
   }
 
   void drills;
+}
+
+export function syncLayerToggleChecks(container, visibility) {
+  if (!container) return;
+  for (const details of container.querySelectorAll(".layer-group")) {
+    const memberCbs = [...details.querySelectorAll("input[data-layer]")];
+    for (const cb of memberCbs) {
+      cb.checked = !!visibility[cb.dataset.layer];
+    }
+    const groupCb = details.querySelector(".group-toggle");
+    if (!groupCb || !memberCbs.length) continue;
+    const checked = memberCbs.filter((c) => c.checked).length;
+    groupCb.checked = checked === memberCbs.length && memberCbs.length > 0;
+    groupCb.indeterminate = checked > 0 && checked < memberCbs.length;
+  }
 }

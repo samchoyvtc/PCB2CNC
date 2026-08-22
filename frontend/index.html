@@ -1420,46 +1420,46 @@
         <h2>Generate CNC path</h2>
         <p class="gen-lede">Pick a layer and tool for each process. Feeds, spindle, and step-down come from that tool’s PCB row.</p>
 
-        <section class="gen-card gen-copper" data-preview-id="copper">
+        <section class="gen-card gen-copper gen-copper-top" data-preview-id="copper">
           <div class="gen-card-head">
             <h3>1 · PCB copper trace engraving</h3>
             <div class="gen-card-actions">
               <button type="button" class="gen-preview-btn" data-op="copper" aria-pressed="false">Preview</button>
             </div>
           </div>
-          <p class="gen-hint" id="gen-copper-hint">Contour isolation around copper. Extra passes step farther out using the tool’s step-over.</p>
+          <p class="gen-hint gen-copper-hint" id="gen-copper-hint">Contour isolation around copper. Extra passes step farther out using the tool’s step-over.</p>
           <div class="field">
             <label>Strategy</label>
             <div class="gen-seg" role="radiogroup" aria-label="Copper engraving strategy">
               <label class="gen-seg-opt">
-                <input type="radio" name="gen-copper-mode" value="contour" checked />
+                <input type="radio" class="gen-copper-mode" name="gen-copper-mode" value="contour" checked />
                 Contour
               </label>
               <label class="gen-seg-opt">
-                <input type="radio" name="gen-copper-mode" value="pocket" />
+                <input type="radio" class="gen-copper-mode" name="gen-copper-mode" value="pocket" />
                 Pocket
               </label>
             </div>
           </div>
           <div class="field">
             <label for="gen-copper-layer">Layer</label>
-            <select id="gen-copper-layer"></select>
+            <select id="gen-copper-layer" class="gen-copper-layer"></select>
           </div>
-          <div class="field" id="gen-copper-outline-wrap" hidden>
+          <div class="field gen-copper-outline-wrap" id="gen-copper-outline-wrap" hidden>
             <label for="gen-copper-outline">Board outline</label>
-            <select id="gen-copper-outline"></select>
+            <select id="gen-copper-outline" class="gen-copper-outline"></select>
           </div>
           <div class="field">
             <label for="gen-copper-tool">Tool</label>
-            <select id="gen-copper-tool"></select>
+            <select id="gen-copper-tool" class="gen-copper-tool"></select>
           </div>
           <div class="field">
             <label for="gen-copper-depth">Engraving depth (mm)</label>
-            <input id="gen-copper-depth" type="number" min="0.01" max="5" step="0.01" value="0.15" />
+            <input id="gen-copper-depth" class="gen-copper-depth" type="number" min="0.01" max="5" step="0.01" value="0.15" />
           </div>
-          <div class="field" id="gen-copper-passes-wrap">
+          <div class="field gen-copper-passes-wrap" id="gen-copper-passes-wrap">
             <label for="gen-copper-passes">Isolation passes</label>
-            <input id="gen-copper-passes" type="number" min="1" max="12" step="1" value="1" />
+            <input id="gen-copper-passes" class="gen-copper-passes" type="number" min="1" max="12" step="1" value="1" />
           </div>
         </section>
 
@@ -1554,6 +1554,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js?v=rapids-3"></script>
+  <script type="module" src="/src/app.js?v=layer-sync-1"></script>
 </body>
 </html>

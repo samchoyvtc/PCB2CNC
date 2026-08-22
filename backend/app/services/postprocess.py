@@ -228,7 +228,11 @@ def _job_from_part(file_name: str, title: str, hole: dict | None) -> tuple[str, 
     name = (file_name or "").lower()
     heading = (title or "").strip()
     if name.startswith("isolation") or "engrav" in heading.lower():
-        job = "Copper engraving"
+        job = (
+            "Copper bottom engraving"
+            if "bottom" in name or "bottom" in heading.lower()
+            else "Copper engraving"
+        )
         detail = "Pocket" if "pocket" in heading.lower() else "Isolation"
     elif name.startswith("drill") or hole or "drill" in heading.lower():
         job = "Drilling"

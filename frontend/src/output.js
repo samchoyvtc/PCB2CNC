@@ -37,6 +37,7 @@ export async function previewPath(jobId, settings, plan) {
 
 export function ncFileLabel(name) {
   if (name === "all.nc") return "Combined job";
+  if (String(name).includes("isolation_bottom")) return "Copper bottom engraving";
   if (String(name).startsWith("isolation")) return "Copper engraving";
   if (String(name).startsWith("drill")) return "Drilling";
   if (String(name).startsWith("outline")) return "Board outline";
@@ -66,7 +67,11 @@ function jobFromPart(fileName, title, hole) {
   const name = String(fileName || "").toLowerCase();
   const heading = String(title || "").trim();
   if (name.startsWith("isolation") || /engrav/i.test(heading)) {
-    return { job: "Copper engraving", detail: /pocket/i.test(heading) ? "Pocket" : "Isolation" };
+    const bottom = name.includes("bottom") || /bottom/i.test(heading);
+    return {
+      job: bottom ? "Copper bottom engraving" : "Copper engraving",
+      detail: /pocket/i.test(heading) ? "Pocket" : "Isolation",
+    };
   }
   if (name.startsWith("drill") || hole || /drill/i.test(heading)) {
     if (hole) {

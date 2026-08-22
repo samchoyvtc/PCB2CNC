@@ -1,5 +1,5 @@
 import { setupDropzone, uploadZip } from "./upload.js";
-import { BoardPreview, renderLayerToggles } from "./preview.js";
+import { BoardPreview, renderLayerToggles, syncLayerToggleChecks } from "./preview.js";
 import { readSettings } from "./settings.js";
 import { fetchNcText, generateJob, parseNcJobSequence, renderDownloads, renderJobSequence, sortNcNames } from "./output.js";
 import {
@@ -140,6 +140,11 @@ function previewTitle(kind) {
   return "Board preview";
 }
 
+function overlayLabel(key) {
+  if (key.startsWith("drill")) return "drill";
+  return key;
+}
+
 function setPreviewHeading(text) {
   const heading = panelPreview?.querySelector("h2");
   if (heading) heading.textContent = text;
@@ -234,6 +239,12 @@ function goGenerate() {
   setStage(3);
 }
 
+function showSelectedGerber(name) {
+  if (!name) return;
+  board.showSelectedLayer(name);
+  syncLayerToggleChecks(layerTogglesEl, board.visibility);
+}
+
 function generatePreviewCtx() {
   return {
     getJobId: () => jobId,
@@ -243,6 +254,7 @@ function generatePreviewCtx() {
       return settings;
     },
     setStatus,
+    onSelectLayer: showSelectedGerber,
     onPathPreview: (result, op, visible = true) => {
       if (!panelGenerateWrap._overlays) panelGenerateWrap._overlays = {};
       if (visible) panelGenerateWrap._overlays[op] = result.paths || [];
@@ -251,7 +263,7 @@ function generatePreviewCtx() {
       board.setToolpaths(keys.flatMap((key) => panelGenerateWrap._overlays[key] || []));
       if (!keys.length) setPreviewHeading("Board preview");
       else if (keys.length === 1) setPreviewHeading(previewTitle(keys[0].startsWith("drill") ? "drill" : keys[0]));
-      else setPreviewHeading(`CNC path · ${keys.map((key) => (key.startsWith("drill") ? "drill" : key)).join(" + ")}`);
+      else setPreviewHeading(`CNC path · ${keys.map(overlayLabel).join(" + ")}`);
       requestAnimationFrame(() => {
         board.resize();
         board.draw();
@@ -263,17 +275,19 @@ function generatePreviewCtx() {
 async function refreshGenerateForm() {
   await ensureToolsLoaded();
   if (!lastPreview || !panelGenerateWrap) return;
+  const ctx = generatePreviewCtx();
   if (generateMountedFor === jobId
       && panelGenerateWrap.querySelector(".gen-drill-depth")
       && panelGenerateWrap.querySelector(".gen-size-strategy")
       && panelGenerateWrap.querySelector("#gen-tab-offset")) {
-    panelGenerateWrap._previewCtx = generatePreviewCtx();
+    panelGenerateWrap._previewCtx = ctx;
+    ctx.onSelectLayer?.(panelGenerateWrap.querySelector(".gen-copper-layer")?.value);
     return;
   }
   mountGenerateForm(panelGenerateWrap, {
     preview: lastPreview,
     tools: listMachineTools(),
-    ...generatePreviewCtx(),
+    ...ctx,
   });
   generateMountedFor = jobId;
 }
@@ -392,7 +406,7 @@ async function onZip(file) {
 }
 
 function planHasWork(plan) {
-  return !!(plan?.copper || (plan?.drills && plan.drills.length) || plan?.outline);
+  return !!(plan?.copper || plan?.copper_bottom || (plan?.drills && plan.drills.length) || plan?.outline);
 }
 
 function clearGcodeInspect() {

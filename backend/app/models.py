@@ -128,6 +128,7 @@ class OutlineOp(BaseModel):
 
 class GeneratePlan(BaseModel):
     copper: Optional[CopperOp] = None
+    copper_bottom: Optional[CopperOp] = None
     drills: list[DrillOp] = Field(default_factory=list)
     outline: Optional[OutlineOp] = None
 

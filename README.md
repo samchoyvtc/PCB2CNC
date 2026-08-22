@@ -1,6 +1,6 @@
 # Gerber CNC GUI
 
-**Version 0.4.1** — Stages 1–4 of the local CAM workflow (preview, board setting, generate, convert).
+**Version 0.4.2** — One copper side per job (top or bottom), pocket bounded by the board profile, Generate Layer switches the canvas Gerber.
 
 Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer previews and downloadable CNC `.nc` files.
 
@@ -11,7 +11,7 @@ Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer pr
 3. **Generate** — copper (contour or pocket), drill (plunge or pocket), and outline with holding tabs; overlay paths on the board  
 4. **Convert** — write `.nc` files; mill-order table or G-code inspect; download  
 
-On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.
+On Generate, **Layer** in copper engraving can be `copper_top` or `copper_bottom` (one side per job). Changing Layer shows that Gerber on the canvas (profile stays on for the board shape). **Pocket** always mills inside the profile / board-outline Gerber. On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.
 
 ## Quick start
 
