@@ -143,6 +143,7 @@ function showPanel(tab) {
 
   if (!isGenerate) {
     board.setToolpaths([]);
+    if (panelGenerateWrap) panelGenerateWrap._overlays = {};
     setPreviewHeading("Board preview");
   }
 
@@ -151,9 +152,11 @@ function showPanel(tab) {
   }
   if (isGenerate) {
     refreshGenerateForm();
+  }
+  if (!isMachine) {
     requestAnimationFrame(() => {
       board.resize();
-      board.fit();
+      if (isGenerate || tab === "layers") board.fit();
     });
   }
 }
@@ -217,15 +220,15 @@ function generatePreviewCtx() {
       return settings;
     },
     setStatus,
-    onPathPreview: (result) => {
-      board.setToolpaths(result.paths || []);
-      const file = (result.files || [])[0] || "";
-      const kind = file.startsWith("drill")
-        ? "drill"
-        : file.includes("outline")
-          ? "outline"
-          : "copper";
-      setPreviewHeading(previewTitle(kind));
+    onPathPreview: (result, op, visible = true) => {
+      if (!panelGenerateWrap._overlays) panelGenerateWrap._overlays = {};
+      if (visible) panelGenerateWrap._overlays[op] = result.paths || [];
+      else delete panelGenerateWrap._overlays[op];
+      const keys = Object.keys(panelGenerateWrap._overlays);
+      board.setToolpaths(keys.flatMap((key) => panelGenerateWrap._overlays[key] || []));
+      if (!keys.length) setPreviewHeading("Board preview");
+      else if (keys.length === 1) setPreviewHeading(previewTitle(keys[0].startsWith("drill") ? "drill" : keys[0]));
+      else setPreviewHeading(`CNC path · ${keys.map((key) => (key.startsWith("drill") ? "drill" : key)).join(" + ")}`);
       requestAnimationFrame(() => {
         board.resize();
         board.draw();
@@ -237,7 +240,10 @@ function generatePreviewCtx() {
 async function refreshGenerateForm() {
   await ensureToolsLoaded();
   if (!lastPreview || !panelGenerateWrap) return;
-  if (generateMountedFor === jobId) {
+  if (generateMountedFor === jobId
+      && panelGenerateWrap.querySelector(".gen-drill-depth")
+      && panelGenerateWrap.querySelector(".gen-size-strategy")
+      && panelGenerateWrap.querySelector("#gen-tab-offset")) {
     panelGenerateWrap._previewCtx = generatePreviewCtx();
     return;
   }

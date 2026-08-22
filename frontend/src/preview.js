@@ -37,6 +37,26 @@ const LAYER_GROUPS = [
   },
 ];
 
+const DRILL_TOOL_RGB = [
+  [249, 75, 4],
+  [246, 148, 3],
+  [26, 45, 241],
+  [18, 195, 252],
+  [79, 23, 137],
+  [209, 0, 143],
+];
+
+export function drillToolRgb(toolNumber) {
+  const n = Number(toolNumber);
+  if (!Number.isFinite(n) || n < 1) return [249, 75, 4];
+  return DRILL_TOOL_RGB[(Math.round(n) - 1) % DRILL_TOOL_RGB.length];
+}
+
+export function drillToolColor(toolNumber, alpha = 0.95) {
+  const [r, g, b] = drillToolRgb(toolNumber);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 const KIND_ORDER = {
   copper_top: 0,
   silkscreen_top: 1,
@@ -86,6 +106,11 @@ export class BoardPreview {
 
     this._onResize = () => this.resize();
     window.addEventListener("resize", this._onResize);
+    this._ro = null;
+    if (typeof ResizeObserver !== "undefined" && this.canvas.parentElement) {
+      this._ro = new ResizeObserver(() => this.resize());
+      this._ro.observe(this.canvas.parentElement);
+    }
     this._bindPointer();
     this.resize();
   }
@@ -132,13 +157,20 @@ export class BoardPreview {
 
   resize() {
     const host = this.canvas.parentElement;
+    if (!host) return;
     const dpr = window.devicePixelRatio || 1;
-    const w = host.clientWidth || 600;
-    const h = host.clientHeight || 420;
-    this.canvas.width = Math.floor(w * dpr);
-    this.canvas.height = Math.floor(h * dpr);
-    this.canvas.style.width = `${w}px`;
-    this.canvas.style.height = `${h}px`;
+    const w = Math.max(1, host.clientWidth || 0);
+    const h = Math.max(1, host.clientHeight || 0);
+    const nextW = Math.floor(w * dpr);
+    const nextH = Math.floor(h * dpr);
+    if (this.canvas.width === nextW && this.canvas.height === nextH) {
+      this.draw();
+      return;
+    }
+    this.canvas.width = nextW;
+    this.canvas.height = nextH;
+    this.canvas.style.width = "100%";
+    this.canvas.style.height = "100%";
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.draw();
   }
@@ -157,6 +189,7 @@ export class BoardPreview {
         );
       }
     }
+    this.resize();
     this.fit();
   }
 
@@ -391,23 +424,75 @@ export class BoardPreview {
     }
 
     this._drawScaleRuler(ctx, w, h);
+    this._drawDrillLegend(ctx, w, h);
   }
 
-  _pathColor(file, kind) {
-    if (kind === "drill" || String(file).startsWith("drill")) return "rgba(239, 68, 68, 0.95)";
+  _pathColor(file, kind, toolNumber) {
+    if (kind === "drill" || String(file).startsWith("drill")) {
+      return drillToolColor(toolNumber);
+    }
     if (String(file).includes("outline")) return "rgba(148, 163, 184, 0.95)";
     return "rgba(245, 166, 35, 0.95)";
+  }
+
+  _drawDrillLegend(ctx, w, h) {
+    const rows = [];
+    const seen = new Set();
+    for (const path of this.toolpaths) {
+      if (path.kind !== "drill") continue;
+      const tool = Number(path.tool_number);
+      if (!Number.isFinite(tool) || tool < 1) continue;
+      const diameter = Number(path.diameter_mm);
+      const key = String(tool);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ tool, diameter });
+    }
+    rows.sort((a, b) => a.tool - b.tool || (a.diameter || 0) - (b.diameter || 0));
+    if (!rows.length) return;
+    const labelOf = (row) =>
+      Number.isFinite(row.diameter) && row.diameter > 0
+        ? `T${row.tool}  Ø ${formatMm(row.diameter)} mm`
+        : `T${row.tool}`;
+    ctx.save();
+    ctx.font = '600 11px "JetBrains Mono", monospace';
+    const textW = Math.max(...rows.map((row) => ctx.measureText(labelOf(row)).width), 64);
+    const rowH = 20;
+    const boxW = textW + 36;
+    const boxH = 8 + rows.length * rowH;
+    const x = w - boxW - 16;
+    const y = h - boxH - 16;
+    ctx.fillStyle = "rgba(7, 11, 20, 0.82)";
+    ctx.fillRect(x - 8, y - 8, boxW + 16, boxH + 8);
+    rows.forEach((row, index) => {
+      const rowY = y + index * rowH;
+      ctx.beginPath();
+      ctx.arc(x + 7, rowY + 7, 5, 0, Math.PI * 2);
+      ctx.fillStyle = drillToolColor(row.tool);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.45)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = "rgba(226, 232, 240, 0.95)";
+      ctx.fillText(labelOf(row), x + 18, rowY + 11);
+    });
+    ctx.restore();
   }
 
   _drawToolpaths(ctx) {
     if (!this.toolpaths.length) return;
     for (const path of this.toolpaths) {
       const pts = path.points || [];
-      const color = this._pathColor(path.file, path.kind);
+      const color = this._pathColor(path.file, path.kind, path.tool_number);
       if (path.kind === "drill") {
+        const toolDia = Number(path.diameter_mm);
+        const holeDia = Number(path.hole_diameter_mm);
+        const diameter = path.strategy === "pocket" && holeDia > 0 ? holeDia : toolDia;
         for (const pt of pts) {
           const p = this.worldToScreen(pt[0], pt[1]);
-          const r = Math.max(2.5, 0.45 * this.scale);
+          const r = Number.isFinite(diameter) && diameter > 0
+            ? Math.max(2.5, (diameter * this.scale) / 2)
+            : Math.max(2.5, 0.45 * this.scale);
           ctx.beginPath();
           ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
           ctx.fillStyle = color;

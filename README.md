@@ -6,7 +6,7 @@ Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer pr
 
 1. **Preview** — drag-drop zip, colored Gerber layers + drill overlay  
 2. **Machine** — pick a PAEN tool; set copper engrave depth, drill depth, and safe Z  
-3. **Generate** — isolation / drill / outline G-code from the selected tool’s PCB properties  
+3. **Generate** — per-process copper (contour/pocket), drill (plunge/pocket), and outline G-code; path overlay on the board  
 4. **Convert** — verification graphic + downloads  
 
 ## Quick start
@@ -30,6 +30,7 @@ Optional: install [pcb2gcode](https://github.com/pcb2gcode/pcb2gcode) on `PATH` 
 | POST | `/api/jobs/upload` | Upload CAM `.zip` |
 | GET | `/api/jobs/{id}/preview` | Colored layer + drill preview payload |
 | POST | `/api/jobs/{id}/generate` | Generate `.nc` + toolpath preview |
+| POST | `/api/jobs/{id}/preview-path` | Overlay one process path on the board |
 | GET | `/api/jobs/{id}/toolpath-preview` | Verification PNG |
 | GET | `/api/jobs/{id}/nc/{file}` | Download G-code |
 

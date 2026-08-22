@@ -18,11 +18,29 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Per-tool PCB cutting values come from the library, not the settings form.
 
 ### Stage 3 — Generate CNC G-code + verification graphic
-- Generate isolation / drill / outline `.nc` from the loaded job.
+- Generate isolation / drill / outline `.nc` from a per-process plan (not a single global tool).
 - Use `pcb2gcode` when installed; otherwise the built-in contour generator.
-- Isolation uses the selected tool number and that tool’s PCB feeds/speeds.
-- Show a colored toolpath verification image.
+- Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
+- Overlay colored toolpaths on the Stage 1 board preview (Preview on each process card).
 - Download split and merged `.nc` files.
+
+**1 · Copper trace engraving**
+- Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a board outline, leaving traces).
+- Fields, top to bottom: Strategy, Layer, Board outline (pocket only), Tool (default T2), Engraving depth (default `0.15 mm`), Isolation passes (contour only).
+- Extra contour passes step farther out using the tool’s step-over.
+
+**2 · PCB drilling**
+- Drill depth (default `1.6 mm`) and one or more Excellon files.
+- Table: hole Ø, count, tool (nearest tip by default), strategy **drill** or **pocket**.
+- Drill: single plunge. Pocket: mill concentric circles so a smaller corn mill can open a hole larger than the tool. Falls back to a plunge if the hole is not larger than the tip.
+- Preview colours follow the assigned tool.
+
+**3 · Board outline cut**
+- Outside compensation: tool center is offset by the cutter radius so the cut edge follows the outline.
+- Fields: Outline layer, Tool (default T4), Cutout depth (default `1.6 mm`), holding-tab count and width.
+- **Tab offset** (0–100% around the perimeter) rotates the evenly spaced tabs. Preview pan/zoom only — no drag handles on the board.
+
+Generate is a right-hand settings column; the board preview stays on the left.
 
 ### Stage 4 — Convert
 - One session: zip → preview → machine → generate → verify → download.
@@ -66,8 +84,7 @@ Other library materials (copper, aluminum, wood, etc.) are ignored.
 3. Open Machine: pick a tool from the 5-column list (Number, Name, Type, Diameter, Tip Diameter).
 4. Remaining geometry and PCB cutting values appear in **Tool properties** below the table.
 5. Confirm copper engrave depth, drill depth, and safe Z.
-6. Generate G-code and inspect the verification graphic.
-7. Download merged and/or split `.nc` files.
+6. Generate: assign layer/tool/strategy per process, Preview on the board, then convert and download `.nc`.
 
 ## Proposed Architecture
 
@@ -95,13 +112,14 @@ flowchart LR
 - Geometry/processing pipeline:
   1. Parse Gerber into preview rasters + bounds.
   2. Parse Excellon into drill hits.
-  3. Generate isolation / outline contours and drill cycles.
+  3. Generate isolation (contour or pocket), drill (plunge or hole-pocket), and outside outline with holding tabs.
   4. Post-process to GRBL-compatible G-code with safe Z, selected-tool spindle/coolant, and tool changes.
 - Preview requirements:
   - Gerber layers visible immediately after upload.
   - Drill overlay toggleable.
   - Coordinate extents shown before generation.
-  - Toolpath verification graphic after generation.
+  - Per-process toolpath overlay on the board canvas during Generate (Preview on).
+  - Toolpath verification graphic after Convert.
 
 ## Project Structure
 
@@ -121,6 +139,7 @@ flowchart LR
   - `src/preview.js`
   - `src/settings.js`
   - `src/tools.js`
+  - `src/generate.js`
   - `src/output.js`
   - `src/app.js`
 - `PAEN_TOOLS.tlslibrary` — machine tool library (geometry + PCB properties)
@@ -145,5 +164,5 @@ flowchart LR
 
 - Stage 1: Dropping a sample Gerber zip shows copper + profile + drills with colors.
 - Stage 2: Machine step lists the six PAEN tools; selecting one shows PCB properties.
-- Stage 3: Generate produces non-empty `.nc` using the selected tool’s PCB feeds and the form depths.
+- Stage 3: Generate writes `isolation.nc`, `drill.nc`, `outline.nc`, and `all.nc` from the per-process plan (contour/pocket copper, drill/pocket holes, outline tabs + offset).
 - Stage 4: One session completes zip → preview → machine → generate → download.

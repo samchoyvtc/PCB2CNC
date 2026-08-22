@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -99,16 +99,22 @@ class UploadResponse(BaseModel):
 class CopperOp(BaseModel):
     layer: str
     tool_number: int = 2
+    isolation_passes: int = Field(1, ge=1, le=12)
+    engrave_mode: Literal["contour", "pocket"] = "contour"
+    outline_layer: Optional[str] = None
+    depth_mm: Optional[float] = Field(default=None, gt=0, le=5)
 
 
 class DrillSizeMap(BaseModel):
     diameter_mm: float = Field(gt=0)
     tool_number: int = 4
+    strategy: Literal["drill", "pocket"] = "drill"
 
 
 class DrillOp(BaseModel):
     layers: list[str] = Field(default_factory=list)
     size_map: list[DrillSizeMap] = Field(default_factory=list)
+    depth_mm: Optional[float] = Field(default=None, gt=0, le=20)
 
 
 class OutlineOp(BaseModel):
@@ -116,6 +122,8 @@ class OutlineOp(BaseModel):
     tool_number: int = 4
     tab_count: int = Field(4, ge=0, le=32)
     tab_width_mm: float = Field(2.0, gt=0, le=20)
+    tab_offset: float = Field(0.0, ge=0, le=1)
+    depth_mm: Optional[float] = Field(default=None, gt=0, le=20)
 
 
 class GeneratePlan(BaseModel):
@@ -145,6 +153,10 @@ class ToolpathPreviewResponse(BaseModel):
 class ToolpathPoly(BaseModel):
     file: str
     kind: str
+    tool_number: Optional[int] = None
+    diameter_mm: Optional[float] = None
+    hole_diameter_mm: Optional[float] = None
+    strategy: Optional[str] = None
     points: list[list[float]] = Field(default_factory=list)
 
 

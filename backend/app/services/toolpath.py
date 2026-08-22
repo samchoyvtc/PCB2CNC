@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import math
+import re
 import shutil
 import subprocess
 from io import BytesIO
@@ -77,21 +78,23 @@ def _default_drill_tool(diameter: float, tools: list[dict[str, Any]]) -> int:
         candidates.append((tip, number))
     if not candidates:
         return 4
-    ge = [(tip, n) for tip, n in candidates if tip + 1e-6 >= diameter]
-    pool = ge or candidates
-    tip, number = min(pool, key=lambda item: (abs(item[0] - diameter), item[1]))
+    tip, number = min(
+        candidates,
+        key=lambda item: (abs(item[0] - diameter), -item[0], item[1]),
+    )
     return number
 
 
-def _split_contour_with_tabs(
+def _default_hole_strategy(hole_dia: float, tool_number: int) -> str:
+    return "pocket" if float(hole_dia) > _tool_tip_mm(tool_number) + 0.05 else "drill"
+
+
+def _closed_contour(
     pts: list[tuple[float, float]],
-    tab_count: int,
-    tab_width_mm: float,
-) -> list[list[tuple[float, float]]]:
-    """Leave holding-tab gaps along a closed outline contour."""
-    if len(pts) < 2 or tab_count <= 0 or tab_width_mm <= 0:
-        return [pts]
+) -> tuple[list[tuple[float, float]], list[float], float]:
     work = list(pts)
+    if len(work) < 2:
+        return work, [0.0], 0.0
     if work[0] != work[-1]:
         work.append(work[0])
     dists = [0.0]
@@ -100,10 +103,50 @@ def _split_contour_with_tabs(
             dists[-1]
             + math.hypot(work[i][0] - work[i - 1][0], work[i][1] - work[i - 1][1])
         )
-    total = dists[-1]
+    return work, dists, dists[-1]
+
+
+def _point_at_distance(
+    work: list[tuple[float, float]],
+    dists: list[float],
+    s: float,
+) -> tuple[float, float]:
+    if not work:
+        return (0.0, 0.0)
+    total = dists[-1] if dists else 0.0
+    if total <= 0:
+        return work[0]
+    s = max(0.0, min(total, s))
+    for i in range(1, len(work)):
+        if dists[i] >= s - 1e-9:
+            span = dists[i] - dists[i - 1]
+            t = 0.0 if span <= 1e-12 else (s - dists[i - 1]) / span
+            x = work[i - 1][0] + (work[i][0] - work[i - 1][0]) * t
+            y = work[i - 1][1] + (work[i][1] - work[i - 1][1]) * t
+            return (x, y)
+    return work[-1]
+
+
+def _tab_center_distances(total: float, tab_count: int, tab_offset: float = 0.0) -> list[float]:
+    offset = float(tab_offset) % 1.0
+    if offset < 0:
+        offset += 1.0
+    return [((i + 0.5) / tab_count + offset) % 1.0 * total for i in range(tab_count)]
+
+
+def _split_contour_with_tabs(
+    pts: list[tuple[float, float]],
+    tab_count: int,
+    tab_width_mm: float,
+    tab_offset: float = 0.0,
+) -> list[list[tuple[float, float]]]:
+    """Leave holding-tab gaps along a closed outline contour."""
+    if len(pts) < 2 or tab_count <= 0 or tab_width_mm <= 0:
+        return [pts]
+    work, dists, total = _closed_contour(pts)
     if total <= tab_width_mm * tab_count * 2:
         return [work]
-    centers = [(i + 0.5) * total / tab_count for i in range(tab_count)]
+    centers = _tab_center_distances(total, tab_count, tab_offset)
     gaps = [((c - tab_width_mm / 2) % total, (c + tab_width_mm / 2) % total) for c in centers]
 
     def _mod(s: float) -> float:
@@ -121,15 +164,7 @@ def _split_contour_with_tabs(
         return False
 
     def point_at(s: float) -> tuple[float, float]:
-        s = max(0.0, min(total, s))
-        for i in range(1, len(work)):
-            if dists[i] >= s - 1e-9:
-                span = dists[i] - dists[i - 1]
-                t = 0.0 if span <= 1e-12 else (s - dists[i - 1]) / span
-                x = work[i - 1][0] + (work[i][0] - work[i - 1][0]) * t
-                y = work[i - 1][1] + (work[i][1] - work[i - 1][1]) * t
-                return (x, y)
-        return work[-1]
+        return _point_at_distance(work, dists, s)
 
     events: list[tuple[float, tuple[float, float]]] = []
     seen: set[float] = set()
@@ -247,6 +282,33 @@ def _run_pcb2gcode(
     return result
 
 
+def _mask_to_paths(
+    binary: np.ndarray,
+    bounds: parser.GerberBounds,
+    dpmm: int,
+    *,
+    retrieve: int = cv2.RETR_LIST,
+    pad_px: int = 0,
+) -> list[list[tuple[float, float]]]:
+    contours, _ = cv2.findContours(binary, retrieve, cv2.CHAIN_APPROX_SIMPLE)
+    paths: list[list[tuple[float, float]]] = []
+    min_area = (dpmm * 0.2) ** 2
+    for cnt in contours:
+        if cv2.contourArea(cnt) < min_area:
+            continue
+        pts: list[tuple[float, float]] = []
+        for p in cnt[:: max(1, len(cnt) // 400)]:
+            px, py = float(p[0][0]), float(p[0][1])
+            x_mm = bounds.min_x + (px - pad_px) / dpmm
+            y_mm = bounds.max_y - (py - pad_px) / dpmm
+            pts.append((x_mm, y_mm))
+        if len(pts) >= 3:
+            if pts[0] != pts[-1]:
+                pts.append(pts[0])
+            paths.append(pts)
+    return paths
+
+
 def _contours_from_gerber(
     path: Path,
     *,
@@ -266,24 +328,223 @@ def _contours_from_gerber(
             cv2.MORPH_ELLIPSE, (offset_px * 2 + 1, offset_px * 2 + 1)
         )
         binary = cv2.dilate(binary, kernel, iterations=1)
+    return _mask_to_paths(binary, bounds, dpmm), bounds
 
-    contours, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    h = arr.shape[0]
+
+def _cutter_radius_mm(tool_number: int) -> float:
+    """Cutting radius from PAEN diameter (or tip) for outside compensation."""
+    row = tool_library.cuts_for_tool_number(tool_number)
+    try:
+        diameter = float(row.get("Diameter(D)") or 0)
+    except (TypeError, ValueError):
+        diameter = 0.0
+    try:
+        tip = float(row.get("Tip Diameter(F)") or 0)
+    except (TypeError, ValueError):
+        tip = 0.0
+    cutter = diameter if diameter > 0 else tip
+    return max(cutter, 0.1) / 2.0
+
+
+def _outside_outline_contour(
+    path: Path,
+    tool_number: int,
+    *,
+    dpmm: int = 50,
+) -> list[tuple[float, float]]:
+    """Tool-center path offset outside the board outline by cutter radius."""
+    radius_mm = _cutter_radius_mm(tool_number)
+    offset_px = max(1, int(round(radius_mm * dpmm)))
+    bounds = parser.parse_gerber_bounds(path)
+    png = parser.render_gerber_png(path, rgba=(255, 255, 255, 255), dpmm=dpmm)
+    img = Image.open(BytesIO(png)).convert("L")
+    arr = np.array(img)
+    _, binary = cv2.threshold(arr, 10, 255, cv2.THRESH_BINARY)
+    pad = offset_px + 2
+    padded = cv2.copyMakeBorder(binary, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (offset_px * 2 + 1, offset_px * 2 + 1)
+    )
+    dilated = cv2.dilate(padded, kernel, iterations=1)
+    paths = _mask_to_paths(
+        dilated,
+        bounds,
+        dpmm,
+        retrieve=cv2.RETR_EXTERNAL,
+        pad_px=pad,
+    )
+    if not paths:
+        raise ValueError("No outline path found")
+    return max(paths, key=_path_length)
+
+
+def _isolation_offsets_px(
+    tool_number: int,
+    passes: int,
+    *,
+    dpmm: int = 50,
+) -> list[int]:
+    """Pixel offsets for successive isolation passes around copper."""
+    row = tool_library.cuts_for_tool_number(tool_number)
+    try:
+        tip = float(row.get("Tip Diameter(F)") or row.get("Diameter(D)") or 0.2)
+    except (TypeError, ValueError):
+        tip = 0.2
+    try:
+        step_pct = float(row.get("Step Over") or 50)
+    except (TypeError, ValueError):
+        step_pct = 50.0
+    tip = max(tip, 0.05)
+    step_mm = max(tip * (step_pct / 100.0), 0.05)
+    offsets: list[int] = []
+    for index in range(max(1, int(passes))):
+        offset_mm = (tip / 2.0) + index * step_mm
+        offsets.append(max(1, int(round(offset_mm * dpmm))))
+    return offsets
+
+
+def _isolation_paths(
+    path: Path,
+    offsets_px: list[int],
+    *,
+    dpmm: int = 50,
+) -> tuple[list[list[tuple[float, float]]], parser.GerberBounds]:
+    bounds = parser.parse_gerber_bounds(path)
+    png = parser.render_gerber_png(path, rgba=(255, 255, 255, 255), dpmm=dpmm)
+    img = Image.open(BytesIO(png)).convert("L")
+    arr = np.array(img)
+    _, binary0 = cv2.threshold(arr, 10, 255, cv2.THRESH_BINARY)
     paths: list[list[tuple[float, float]]] = []
-    min_area = (dpmm * 0.2) ** 2
-    for cnt in contours:
-        if cv2.contourArea(cnt) < min_area:
-            continue
-        pts: list[tuple[float, float]] = []
-        for p in cnt[:: max(1, len(cnt) // 400)]:  # downsample long contours
-            px, py = float(p[0][0]), float(p[0][1])
-            x_mm = bounds.min_x + px / dpmm
-            y_mm = bounds.max_y - py / dpmm  # image Y down → board Y up
-            pts.append((x_mm, y_mm))
-        if len(pts) >= 3:
-            if pts[0] != pts[-1]:
-                pts.append(pts[0])
-            paths.append(pts)
+    for offset_px in offsets_px:
+        binary = binary0
+        if offset_px > 0:
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (offset_px * 2 + 1, offset_px * 2 + 1)
+            )
+            binary = cv2.dilate(binary0, kernel, iterations=1)
+        paths.extend(_mask_to_paths(binary, bounds, dpmm))
+    return paths, bounds
+
+
+def _tool_tip_mm(tool_number: int) -> float:
+    row = tool_library.cuts_for_tool_number(tool_number)
+    try:
+        tip = float(row.get("Tip Diameter(F)") or row.get("Diameter(D)") or 0.2)
+    except (TypeError, ValueError):
+        tip = 0.2
+    return max(tip, 0.05)
+
+
+def _tool_step_mm(tool_number: int) -> float:
+    row = tool_library.cuts_for_tool_number(tool_number)
+    try:
+        step_pct = float(row.get("Step Over") or 50)
+    except (TypeError, ValueError):
+        step_pct = 50.0
+    return max(_tool_tip_mm(tool_number) * (step_pct / 100.0), 0.05)
+
+
+def _binary_from_gerber(path: Path, dpmm: int) -> tuple[np.ndarray, parser.GerberBounds]:
+    bounds = parser.parse_gerber_bounds(path)
+    png = parser.render_gerber_png(path, rgba=(255, 255, 255, 255), dpmm=dpmm)
+    arr = np.array(Image.open(BytesIO(png)).convert("L"))
+    _, binary = cv2.threshold(arr, 10, 255, cv2.THRESH_BINARY)
+    return binary, bounds
+
+
+def _union_bounds(
+    *bounds_list: parser.GerberBounds,
+    pad_mm: float = 2.0,
+) -> parser.GerberBounds:
+    return parser.GerberBounds(
+        min_x=min(b.min_x for b in bounds_list) - pad_mm,
+        min_y=min(b.min_y for b in bounds_list) - pad_mm,
+        max_x=max(b.max_x for b in bounds_list) + pad_mm,
+        max_y=max(b.max_y for b in bounds_list) + pad_mm,
+    )
+
+
+def _paste_mask(
+    dst: np.ndarray,
+    src: np.ndarray,
+    src_bounds: parser.GerberBounds,
+    canvas_bounds: parser.GerberBounds,
+    dpmm: int,
+) -> None:
+    x0 = int(round((src_bounds.min_x - canvas_bounds.min_x) * dpmm))
+    y0 = int(round((canvas_bounds.max_y - src_bounds.max_y) * dpmm))
+    h, w = dst.shape
+    sh, sw = src.shape
+    dy0, dx0 = max(0, y0), max(0, x0)
+    dy1, dx1 = min(h, y0 + sh), min(w, x0 + sw)
+    if dy1 <= dy0 or dx1 <= dx0:
+        return
+    sy0, sx0 = dy0 - y0, dx0 - x0
+    dst[dy0:dy1, dx0:dx1] = np.maximum(
+        dst[dy0:dy1, dx0:dx1],
+        src[sy0 : sy0 + (dy1 - dy0), sx0 : sx0 + (dx1 - dx0)],
+    )
+
+
+def _filled_board_mask(outline_binary: np.ndarray) -> np.ndarray:
+    """Treat a stroke or filled outline Gerber as the board interior."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    closed = cv2.dilate(outline_binary, kernel, iterations=1)
+    padded = cv2.copyMakeBorder(closed, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    flood = padded.copy()
+    mask = np.zeros((padded.shape[0] + 2, padded.shape[1] + 2), dtype=np.uint8)
+    cv2.floodFill(flood, mask, (0, 0), 255)
+    interior = np.where(flood[1:-1, 1:-1] == 0, 255, 0).astype(np.uint8)
+    return cv2.bitwise_or(interior, closed)
+
+
+def _pocket_paths(
+    copper_path: Path,
+    tool_number: int,
+    *,
+    outline_path: Path,
+    dpmm: int = 50,
+) -> tuple[list[list[tuple[float, float]]], parser.GerberBounds]:
+    """Clear unused copper inside the board outline, leaving traces."""
+    copper_bin, copper_bounds = _binary_from_gerber(copper_path, dpmm)
+    outline_bin, outline_bounds = _binary_from_gerber(outline_path, dpmm)
+    bounds = _union_bounds(copper_bounds, outline_bounds)
+    height = max(1, int(round(bounds.height * dpmm)))
+    width = max(1, int(round(bounds.width * dpmm)))
+    copper = np.zeros((height, width), dtype=np.uint8)
+    outline = np.zeros((height, width), dtype=np.uint8)
+    _paste_mask(copper, copper_bin, copper_bounds, bounds, dpmm)
+    _paste_mask(outline, outline_bin, outline_bounds, bounds, dpmm)
+    board = _filled_board_mask(outline)
+    if cv2.countNonZero(board) < 16:
+        raise ValueError(
+            "Board outline did not form a closed region for pocket engraving"
+        )
+    radius_px = max(1, int(round((_tool_tip_mm(tool_number) / 2.0) * dpmm)))
+    step_px = max(1, int(round(_tool_step_mm(tool_number) * dpmm)))
+    radius_k = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (radius_px * 2 + 1, radius_px * 2 + 1)
+    )
+    step_k = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (step_px * 2 + 1, step_px * 2 + 1)
+    )
+    keep = cv2.dilate(copper, radius_k, iterations=1)
+    clear = cv2.bitwise_and(cv2.erode(board, radius_k, iterations=1), cv2.bitwise_not(keep))
+    work = clear
+    paths: list[list[tuple[float, float]]] = []
+    min_pixels = max(4, int((dpmm * 0.15) ** 2))
+    for _ in range(80):
+        if cv2.countNonZero(work) < min_pixels:
+            break
+        layer_paths = _mask_to_paths(work, bounds, dpmm)
+        if not layer_paths:
+            break
+        paths.extend(layer_paths)
+        work = cv2.erode(work, step_k, iterations=1)
+    if not paths:
+        raise ValueError(
+            "No pocket region inside the board outline; traces may fill the board or the tool is too large"
+        )
     return paths, bounds
 
 
@@ -325,15 +586,13 @@ def _builtin_generate(
         produced.append("drill.nc")
 
     if "profile" in files:
-        paths, _ = _contours_from_gerber(files["profile"], offset_px=0)
-        # Prefer the longest contour as board outline
-        paths = sorted(paths, key=lambda p: len(p), reverse=True)[:3]
+        longest = _outside_outline_contour(files["profile"], 4)
         outline = out_dir / "outline.nc"
         write_path_nc(
             outline,
-            paths,
+            [longest],
             settings=settings,
-            operation="Board Outline",
+            operation="Board Outline (outside)",
             tool_number=4,
             depth_mm=settings.drill_depth_mm,
             include_header=True,
@@ -368,14 +627,34 @@ def _plan_generate(
     if plan.copper:
         copper_file = _cam_by_name(job_id, plan.copper.layer)
         copper_settings = _settings_for_tool(settings, plan.copper.tool_number)
-        paths, _ = _contours_from_gerber(copper_file, offset_px=3)
+        if plan.copper.engrave_mode == "pocket":
+            outline_name = plan.copper.outline_layer or (
+                plan.outline.layer if plan.outline else None
+            )
+            if not outline_name:
+                raise ValueError(
+                    "Pocket engraving needs a board outline layer"
+                )
+            paths, _ = _pocket_paths(
+                copper_file,
+                plan.copper.tool_number,
+                outline_path=_cam_by_name(job_id, outline_name),
+            )
+            operation = "Pocket Engraving"
+        else:
+            offsets = _isolation_offsets_px(
+                plan.copper.tool_number,
+                plan.copper.isolation_passes,
+            )
+            paths, _ = _isolation_paths(copper_file, offsets)
+            operation = "Isolation Engraving"
         write_path_nc(
             out_dir / "isolation.nc",
             paths,
             settings=copper_settings,
-            operation="Isolation Engraving",
+            operation=operation,
             tool_number=plan.copper.tool_number,
-            depth_mm=settings.engraving_depth_mm,
+            depth_mm=plan.copper.depth_mm or settings.engraving_depth_mm,
             include_header=True,
             step_down_mm=copper_settings.step_down_mm,
         )
@@ -390,19 +669,35 @@ def _plan_generate(
             round(float(item.diameter_mm), 3): int(item.tool_number)
             for item in drill_op.size_map
         }
-        grouped: dict[tuple[int, float], list[parser.DrillHit]] = {}
+        size_to_strategy = {
+            round(float(item.diameter_mm), 3): (
+                "pocket" if item.strategy == "pocket" else "drill"
+            )
+            for item in drill_op.size_map
+        }
+        grouped: dict[tuple[int, float, str], list[parser.DrillHit]] = {}
         for hit in hits:
             diameter = round(float(hit.diameter), 3)
-            tool_number = size_to_tool.get(diameter)
-            if tool_number is None and size_to_tool:
-                nearest = min(size_to_tool, key=lambda value: abs(value - diameter))
-                tool_number = size_to_tool[nearest]
+            lookup = diameter
+            if lookup not in size_to_tool and size_to_tool:
+                lookup = min(size_to_tool, key=lambda value: abs(value - diameter))
+            tool_number = size_to_tool.get(lookup)
             if tool_number is None:
                 tool_number = _default_drill_tool(diameter, tool_rows)
-            grouped.setdefault((tool_number, diameter), []).append(hit)
+            if lookup in size_to_strategy:
+                strategy = size_to_strategy[lookup]
+            else:
+                strategy = _default_hole_strategy(diameter, tool_number)
+            grouped.setdefault((tool_number, diameter, strategy), []).append(hit)
         groups = [
-            (tool_number, _settings_for_tool(settings, tool_number), group_hits, diameter)
-            for (tool_number, diameter), group_hits in sorted(
+            (
+                tool_number,
+                _settings_for_tool(settings, tool_number),
+                group_hits,
+                diameter,
+                strategy,
+            )
+            for (tool_number, diameter, strategy), group_hits in sorted(
                 grouped.items(), key=lambda item: (item[0][1], item[0][0])
             )
         ]
@@ -411,29 +706,30 @@ def _plan_generate(
             out_dir / name,
             groups,
             settings=settings,
-            depth_mm=settings.drill_depth_mm,
+            depth_mm=drill_op.depth_mm or settings.drill_depth_mm,
         )
         produced.append(name)
 
     if plan.outline:
         outline_file = _cam_by_name(job_id, plan.outline.layer)
         outline_settings = _settings_for_tool(settings, plan.outline.tool_number)
-        paths, _ = _contours_from_gerber(outline_file, offset_px=0)
-        if not paths:
-            raise ValueError(f"No outline path found in {plan.outline.layer}")
-        longest = max(paths, key=_path_length)
+        try:
+            longest = _outside_outline_contour(outline_file, plan.outline.tool_number)
+        except ValueError as exc:
+            raise ValueError(f"{exc} in {plan.outline.layer}") from exc
         segments = _split_contour_with_tabs(
             longest,
             plan.outline.tab_count,
             plan.outline.tab_width_mm,
+            plan.outline.tab_offset,
         )
         write_path_nc(
             out_dir / "outline.nc",
             segments,
             settings=outline_settings,
-            operation="Board Outline",
+            operation="Board Outline (outside)",
             tool_number=plan.outline.tool_number,
-            depth_mm=settings.drill_depth_mm,
+            depth_mm=plan.outline.depth_mm or settings.drill_depth_mm,
             include_header=True,
             step_down_mm=outline_settings.step_down_mm,
             close_open_paths=False,
@@ -459,7 +755,10 @@ def generate_toolpaths(
     plan: GeneratePlan | None = None,
 ) -> dict[str, Any]:
     settings = settings or MachineSettings()
-    if settings.engraving_depth_mm > settings.drill_depth_mm:
+    engrave_depth = settings.engraving_depth_mm
+    if plan is not None and plan.copper and plan.copper.depth_mm:
+        engrave_depth = plan.copper.depth_mm
+    if engrave_depth > settings.drill_depth_mm:
         raise ValueError("Copper engrave depth exceeds drill depth")
     settings.spindle_rpm = max(1000, min(settings.spindle_rpm, 60000))
     settings.feed_mm_min = max(50.0, min(settings.feed_mm_min, 10000.0))
@@ -535,44 +834,161 @@ def preview_operation(
     }
 
 
-def extract_preview_paths(out_dir: Path) -> list[dict[str, Any]]:
-    """Return cut polylines and drill hits from generated NC files."""
-    import re
+_DRILL_TOOL_RGB = [
+    (249, 75, 4),
+    (246, 148, 3),
+    (26, 45, 241),
+    (18, 195, 252),
+    (79, 23, 137),
+    (209, 0, 143),
+]
 
-    def xy_hits(nc_text: str) -> list[list[float]]:
-        pts: list[list[float]] = []
-        seen: set[tuple[float, float]] = set()
-        x = y = None
-        for line in nc_text.splitlines():
-            s = line.strip().upper()
-            if not s or s.startswith(";") or s.startswith("("):
-                continue
-            mx = re.search(r"X([+-]?\d*\.?\d+)", s)
-            my = re.search(r"Y([+-]?\d*\.?\d+)", s)
+
+def _drill_tool_rgba(tool_number: int) -> tuple[int, int, int, int]:
+    if tool_number < 1:
+        return (249, 75, 4, 255)
+    red, green, blue = _DRILL_TOOL_RGB[(tool_number - 1) % len(_DRILL_TOOL_RGB)]
+    return (red, green, blue, 255)
+
+
+def _parse_hole_diameter_mm(line: str) -> float | None:
+    match = re.search(r"(?:Ø|DIA(?:METER)?)\s*([0-9]*\.?[0-9]+)\s*mm", line, re.I)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _drill_groups(
+    nc_text: str,
+) -> list[tuple[int, float | None, list[list[float]], str]]:
+    """Group unique G0 XY drill hits by T word, hole diameter, and strategy."""
+    grouped: dict[tuple[int, float | None, str], list[list[float]]] = {}
+    seen: dict[tuple[int, float | None, str], set[tuple[float, float]]] = {}
+    tool = 0
+    diameter: float | None = None
+    strategy = "drill"
+    x = y = None
+    for line in nc_text.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        parsed_dia = _parse_hole_diameter_mm(raw)
+        if parsed_dia is not None:
+            diameter = parsed_dia
+            strategy = "pocket" if re.search(r"\bpocket\b", raw, re.I) else "drill"
+        s = raw.upper()
+        if s.startswith(";") or s.startswith("("):
+            continue
+        tool_match = re.search(r"\bT(\d+)\b", s)
+        if tool_match:
+            tool = int(tool_match.group(1))
+        is_rapid = s.startswith("G00") or (s.startswith("G0") and not s.startswith("G01"))
+        if not is_rapid:
+            continue
+        mx = re.search(r"X([+-]?\d*\.?\d+)", s)
+        my = re.search(r"Y([+-]?\d*\.?\d+)", s)
+        if mx:
+            x = float(mx.group(1))
+        if my:
+            y = float(my.group(1))
+        if not mx and not my:
+            continue
+        if x is None or y is None:
+            continue
+        gkey = (tool, round(diameter, 3) if diameter else None, strategy)
+        point = (round(x, 4), round(y, 4))
+        bucket = seen.setdefault(gkey, set())
+        if point in bucket:
+            continue
+        bucket.add(point)
+        grouped.setdefault(gkey, []).append([x, y])
+    return [
+        (tool_number, dia, hits, mode)
+        for (tool_number, dia, mode), hits in sorted(
+            grouped.items(),
+            key=lambda item: (item[0][0], item[0][1] or 0.0),
+        )
+    ]
+
+
+def _drill_feed_polylines(nc_text: str) -> list[tuple[int, list[list[float]]]]:
+    """XY feed moves from a drill file (pocket rings). Rapid moves start a new path."""
+    out: list[tuple[int, list[list[float]]]] = []
+    current: list[list[float]] = []
+    tool = 0
+    x: float | None = None
+    y: float | None = None
+    for line in nc_text.splitlines():
+        s = line.strip().upper()
+        if not s or s.startswith(";") or s.startswith("("):
+            continue
+        tool_match = re.search(r"\bT(\d+)\b", s)
+        if tool_match:
+            tool = int(tool_match.group(1))
+        is_rapid = s.startswith("G00") or (s.startswith("G0") and not s.startswith("G01"))
+        is_feed = s.startswith("G1") or s.startswith("G01")
+        mx = re.search(r"X([+-]?\d*\.?\d+)", s)
+        my = re.search(r"Y([+-]?\d*\.?\d+)", s)
+        if is_rapid:
+            if len(current) >= 2:
+                out.append((tool, current))
+            current = []
             if mx:
                 x = float(mx.group(1))
             if my:
                 y = float(my.group(1))
-            if not mx and not my:
-                continue
-            if x is None or y is None:
-                continue
-            key = (round(x, 4), round(y, 4))
-            if key in seen:
-                continue
-            seen.add(key)
-            pts.append([x, y])
-        return pts
+            continue
+        if not is_feed or (not mx and not my):
+            continue
+        if mx:
+            x = float(mx.group(1))
+        if my:
+            y = float(my.group(1))
+        if x is None or y is None:
+            continue
+        current.append([x, y])
+    if len(current) >= 2:
+        out.append((tool, current))
+    return out
 
+
+def extract_preview_paths(out_dir: Path) -> list[dict[str, Any]]:
+    """Return cut polylines and drill hits from generated NC files."""
     out: list[dict[str, Any]] = []
     for path in sorted(out_dir.glob("*.nc")):
         if path.name == "all.nc":
             continue
         text = path.read_text(errors="replace")
         if path.name.startswith("drill"):
-            hits = xy_hits(text)
-            if hits:
-                out.append({"file": path.name, "kind": "drill", "points": hits})
+            for tool_number, hole_diameter, hits, strategy in _drill_groups(text):
+                if not hits:
+                    continue
+                item: dict[str, Any] = {
+                    "file": path.name,
+                    "kind": "drill",
+                    "tool_number": tool_number,
+                    "diameter_mm": _tool_tip_mm(tool_number),
+                    "strategy": strategy,
+                    "points": hits,
+                }
+                if hole_diameter:
+                    item["hole_diameter_mm"] = hole_diameter
+                out.append(item)
+            for tool_number, poly in _drill_feed_polylines(text):
+                if len(poly) < 2:
+                    continue
+                out.append(
+                    {
+                        "file": path.name,
+                        "kind": "cut",
+                        "tool_number": tool_number,
+                        "points": poly,
+                    }
+                )
             continue
         for poly in parse_gcode_paths(text):
             if len(poly) < 2:
@@ -589,7 +1005,6 @@ def extract_preview_paths(out_dir: Path) -> list[dict[str, Any]]:
 
 def parse_gcode_paths(nc_text: str) -> list[list[tuple[float, float]]]:
     """Extract rapid/feed XY polylines from G-code for plotting."""
-    import re
 
     paths: list[list[tuple[float, float]]] = []
     current: list[tuple[float, float]] = []
@@ -644,32 +1059,34 @@ def render_toolpath_preview(
 
     colors = {
         "isolation.nc": (245, 166, 35, 255),
-        "drill.nc": (239, 68, 68, 255),
         "outline.nc": (148, 163, 184, 255),
         "all.nc": (96, 165, 250, 120),
     }
-    drill_palette = [
-        (239, 68, 68, 255),
-        (251, 146, 60, 255),
-        (244, 63, 94, 255),
-        (249, 115, 22, 255),
-    ]
 
     all_pts: list[tuple[float, float]] = []
     op_paths: dict[str, list[list[tuple[float, float]]]] = {}
+    drill_groups: list[tuple[int, float | None, list[tuple[float, float]], str]] = []
+    drill_rings: list[tuple[int, list[tuple[float, float]]]] = []
     names = [
         path.name
         for path in sorted(out_dir.glob("*.nc"))
         if path.name != "all.nc"
     ]
-    drill_index = 0
     for name in names:
         path = out_dir / name
-        paths = parse_gcode_paths(path.read_text(errors="replace"))
+        text = path.read_text(errors="replace")
+        if name.startswith("drill"):
+            for tool_number, diameter, hits, strategy in _drill_groups(text):
+                pts = [(pt[0], pt[1]) for pt in hits]
+                drill_groups.append((tool_number, diameter, pts, strategy))
+                all_pts.extend(pts)
+            for tool_number, poly in _drill_feed_polylines(text):
+                ring = [(pt[0], pt[1]) for pt in poly]
+                drill_rings.append((tool_number, ring))
+                all_pts.extend(ring)
+            continue
+        paths = parse_gcode_paths(text)
         op_paths[name] = paths
-        if name.startswith("drill") and name not in colors:
-            colors[name] = drill_palette[drill_index % len(drill_palette)]
-            drill_index += 1
         for poly in paths:
             all_pts.extend(poly)
 
@@ -706,13 +1123,31 @@ def render_toolpath_preview(
         for poly in paths:
             if len(poly) < 2:
                 continue
-            px = [to_px(p) for p in poly]
-            if name.startswith("drill"):
-                for p in px:
-                    r = 3
-                    draw.ellipse((p[0] - r, p[1] - r, p[0] + r, p[1] + r), fill=color)
-            else:
-                draw.line(px, fill=color, width=2)
+            draw.line([to_px(p) for p in poly], fill=color, width=2)
+
+    for tool_number, hole_diameter, pts, strategy in drill_groups:
+        color = _drill_tool_rgba(tool_number)
+        tool_dia = _tool_tip_mm(tool_number)
+        draw_dia = (
+            hole_diameter
+            if strategy == "pocket" and hole_diameter
+            else tool_dia
+        )
+        radius = max(3.0, (float(draw_dia) / 2.0) * scale)
+        for pt in pts:
+            p = to_px(pt)
+            draw.ellipse(
+                (p[0] - radius, p[1] - radius, p[0] + radius, p[1] + radius),
+                fill=color,
+            )
+    for tool_number, ring in drill_rings:
+        if len(ring) < 2:
+            continue
+        draw.line(
+            [to_px(p) for p in ring],
+            fill=_drill_tool_rgba(tool_number),
+            width=2,
+        )
 
     # Legend
     legend_y = 12
@@ -721,6 +1156,22 @@ def render_toolpath_preview(
             continue
         draw.rectangle((12, legend_y, 28, legend_y + 12), fill=color)
         draw.text((34, legend_y - 1), name.replace(".nc", ""), fill=(226, 232, 240, 255))
+        legend_y += 18
+    seen_tools: set[int] = set()
+    for tool_number, _hole_diameter, _pts, _strategy in drill_groups:
+        if tool_number in seen_tools:
+            continue
+        seen_tools.add(tool_number)
+        tool_dia = _tool_tip_mm(tool_number)
+        draw.rectangle(
+            (12, legend_y, 28, legend_y + 12),
+            fill=_drill_tool_rgba(tool_number),
+        )
+        draw.text(
+            (34, legend_y - 1),
+            f"T{tool_number}  Ø {tool_dia:g} mm",
+            fill=(226, 232, 240, 255),
+        )
         legend_y += 18
 
     buf = BytesIO()
