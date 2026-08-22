@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "frontend"
 
-app = FastAPI(title="Gerber CNC GUI", version="0.4.0")
+app = FastAPI(title="Gerber CNC GUI", version="0.4.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

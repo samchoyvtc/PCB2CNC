@@ -1,6 +1,6 @@
 # Gerber CNC GUI
 
-**Version 0.4.0** — Stages 1–4 of the local CAM workflow (preview, board setting, generate, convert).
+**Version 0.4.1** — Stages 1–4 of the local CAM workflow (preview, board setting, generate, convert).
 
 Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer previews and downloadable CNC `.nc` files.
 

@@ -1,6 +1,6 @@
 # PCB Gerber-to-G-code MVP Plan
 
-**Version 0.4.0** — Stage 4 Convert is in; the zip → preview → board setting → generate → download path is the current release.
+**Version 0.4.1** — Stage 4 Convert is in; contour isolation follows pour slots as well as copper islands.
 
 ## Goal
 
@@ -28,7 +28,7 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - **Preview** on each process card overlays that job’s toolpaths on the board (toggle on/off).
 - **Hide rapids** switch appears here (and on Convert) once paths exist; on by default so G0 travel is hidden.
 - Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
-- Isolation follows copper **outer** contours (Euclidean offset by tip radius). Pad holes are not cut as paths. Long outlines are not thinned to a 400-point cap, so chords do not cut through pads.
+- Isolation follows copper **outer** contours and slots cut into large pours (Euclidean offset by tip radius). Pad drill holes are not cut as paths. Long outlines are not thinned to a 400-point cap, so chords do not cut through pads.
 - Convert (Stage 4) writes the downloadable `.nc` files from this plan.
 
 **1 · Copper trace engraving**

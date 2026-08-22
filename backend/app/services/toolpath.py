@@ -302,6 +302,11 @@ def _simplify_contour(cnt: np.ndarray, dpmm: int) -> np.ndarray:
     return approx if len(approx) >= 3 else cnt
 
 
+def _is_pad_island(cnt: np.ndarray, dpmm: int) -> bool:
+    """True when the outer copper island is pad-sized (holes are drill hits)."""
+    return cv2.contourArea(cnt) < (4.0 * dpmm) ** 2
+
+
 def _mask_to_paths(
     binary: np.ndarray,
     bounds: parser.GerberBounds,
@@ -310,8 +315,9 @@ def _mask_to_paths(
     retrieve: int = cv2.RETR_LIST,
     pad_px: int = 0,
     outers_only: bool = False,
+    skip_pad_holes: bool = False,
 ) -> list[list[tuple[float, float]]]:
-    mode = cv2.RETR_CCOMP if outers_only else retrieve
+    mode = cv2.RETR_CCOMP if (outers_only or skip_pad_holes) else retrieve
     contours, hierarchy = cv2.findContours(
         binary.copy(), mode, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -320,8 +326,11 @@ def _mask_to_paths(
     parents = hierarchy[0] if hierarchy is not None else None
     for index, cnt in enumerate(contours):
         parent = int(parents[index][3]) if parents is not None else -1
-        if outers_only and parent != -1:
-            continue
+        if parent != -1:
+            if outers_only:
+                continue
+            if skip_pad_holes and _is_pad_island(contours[parent], dpmm):
+                continue
         if cv2.contourArea(cnt) < min_area:
             continue
         approx = _simplify_contour(cnt, dpmm)
@@ -369,7 +378,7 @@ def _contours_from_gerber(
             expanded,
             bounds,
             dpmm,
-            outers_only=True,
+            skip_pad_holes=True,
             pad_px=pad,
         ),
         bounds,
@@ -477,7 +486,7 @@ def _isolation_paths(
                 expanded,
                 bounds,
                 dpmm,
-                outers_only=True,
+                skip_pad_holes=True,
                 pad_px=pad,
             )
         )

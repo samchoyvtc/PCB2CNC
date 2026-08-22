@@ -272,6 +272,48 @@ def test_isolation_skips_inner_pad_holes():
     assert len(listed) >= 2
 
 
+def test_isolation_includes_slots_in_copper_pour():
+    import cv2
+    import numpy as np
+
+    from app.services import parser
+    from app.services.toolpath import _expand_mask, _mask_to_paths
+
+    dpmm = 50
+    size = 400
+    copper = np.zeros((size, size), dtype=np.uint8)
+    cv2.rectangle(copper, (10, 10), (390, 390), 255, thickness=-1)
+    cv2.rectangle(copper, (240, 40), (360, 130), 0, thickness=-1)
+    cv2.rectangle(copper, (280, 80), (330, 200), 0, thickness=-1)
+    cv2.circle(copper, (80, 80), 22, 0, thickness=-1)
+    cv2.circle(copper, (80, 80), 14, 255, thickness=-1)
+    cv2.circle(copper, (80, 80), 6, 0, thickness=-1)
+    expanded, pad = _expand_mask(copper, 5)
+    bounds = parser.GerberBounds(0.0, 0.0, size / dpmm, size / dpmm)
+    with_slots = _mask_to_paths(
+        expanded, bounds, dpmm, skip_pad_holes=True, pad_px=pad
+    )
+    outers = _mask_to_paths(
+        expanded, bounds, dpmm, outers_only=True, pad_px=pad
+    )
+    assert len(with_slots) > len(outers)
+    slot_hits = []
+    for path in with_slots:
+        for x_mm, y_mm in path:
+            x = x_mm * dpmm
+            y = size - y_mm * dpmm
+            if 230 <= x <= 370 and 30 <= y <= 210:
+                slot_hits.append((x, y))
+    assert slot_hits
+    pad_hole = [
+        (x_mm * dpmm, size - y_mm * dpmm)
+        for path in with_slots
+        for x_mm, y_mm in path
+        if abs(x_mm * dpmm - 80) < 8 and abs(size - y_mm * dpmm - 80) < 8
+    ]
+    assert not pad_hole
+
+
 def test_isolation_keeps_pads_inside_copper_pour():
     import cv2
     import numpy as np
@@ -295,6 +337,27 @@ def test_isolation_keeps_pads_inside_copper_pour():
     )
     assert len(isolation) >= 2
     assert len(external) == 1
+
+
+@pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")
+def test_simple_isolation_covers_pour_slot():
+    import zipfile
+    import tempfile
+    from pathlib import Path
+
+    from app.services.toolpath import _isolation_offsets_px, _isolation_paths
+
+    with tempfile.TemporaryDirectory() as tmp:
+        zipfile.ZipFile(SIMPLE_ZIP).extractall(tmp)
+        copper = next(Path(tmp).rglob("copper_top.gbr"))
+        paths, _ = _isolation_paths(copper, _isolation_offsets_px(2, 1), dpmm=50)
+    slot = [
+        (x, y)
+        for path in paths
+        for x, y in path
+        if 18.0 < x < 21.5 and 26.0 < y < 34.0
+    ]
+    assert slot
 
 
 def test_cutter_radius_uses_tool_diameter():
