@@ -1,5 +1,7 @@
 # PCB Gerber-to-G-code MVP Plan
 
+**Version 0.4.0** — Stage 4 Convert is in; the zip → preview → board setting → generate → download path is the current release.
+
 ## Goal
 
 Create a local web-based workflow (inspired by [Carbide Copper](https://copper.carbide3d.com/)) to convert single-sided PCB files into CNC milling/drilling G-code with straightforward machine/tool configuration.
@@ -11,21 +13,26 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Classify layers (copper, profile, mask, silk, drill).
 - Render multi-layer canvas preview with distinct colors and toggles.
 - Overlay Excellon drill hits (not finished machine G-code).
+- Show board extents (width × length) on the canvas. Hide-rapids is not shown on this stage.
 
-### Stage 2 — Machine setup
-- Load `PAEN_TOOLS.tlslibrary` (binary PAEN format) and show a compact tool list.
-- Job-wide settings only: copper engrave depth, drill depth, safe Z.
-- Per-tool PCB cutting values come from the library, not the settings form.
+### Stage 2 — Board setting
+- Heading **Board setting** (not Machine settings).
+- Stock size: width default `100 mm`, length default `150 mm`.
+- Job-wide depths: copper engrave `0.15 mm`, drill `1.6 mm`.
+- **Safe Position**: Clearance Height (Safe Z, default `15 mm`) and Retract Height (default `3 mm`).
+- Load `PAEN_TOOLS.tlslibrary` and show a 5-column tool list (Number, Name, Type, Diameter, Tip Diameter). Remaining geometry and PCB cutting values appear in **Tool properties** when a row is selected.
+- Feeds, spindle, step-over, step-down, and coolant come from the selected tool’s PCB row, not the settings form.
 
-### Stage 3 — Generate CNC G-code + verification graphic
-- Generate isolation / drill / outline `.nc` from a per-process plan (not a single global tool).
-- Use `pcb2gcode` when installed; otherwise the built-in contour generator.
+### Stage 3 — Generate CNC paths
+- Right-hand settings column; the Stage 1 board preview stays on the left (~60% / 40%).
+- **Preview** on each process card overlays that job’s toolpaths on the board (toggle on/off).
+- **Hide rapids** switch appears here (and on Convert) once paths exist; on by default so G0 travel is hidden.
 - Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
-- Overlay colored toolpaths on the Stage 1 board preview (Preview on each process card).
+- Isolation follows copper **outer** contours (Euclidean offset by tip radius). Pad holes are not cut as paths. Long outlines are not thinned to a 400-point cap, so chords do not cut through pads.
 - Convert (Stage 4) writes the downloadable `.nc` files from this plan.
 
 **1 · Copper trace engraving**
-- Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a board outline, leaving traces).
+- Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a selected board outline, leaving traces).
 - Fields, top to bottom: Strategy, Layer, Board outline (pocket only), Tool (default T2), Engraving depth (default `0.15 mm`), Isolation passes (contour only).
 - Extra contour passes step farther out using the tool’s step-over.
 
@@ -33,19 +40,21 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Drill depth (default `1.6 mm`) and one or more Excellon files.
 - Table: hole Ø, count, tool (nearest tip by default), strategy **drill** or **pocket**.
 - Drill: single plunge. Pocket: mill concentric circles so a smaller corn mill can open a hole larger than the tool. Falls back to a plunge if the hole is not larger than the tip.
-- Preview colours follow the assigned tool.
+- Preview colours follow the assigned tool; hole size is shown in the legend.
 
 **3 · Board outline cut**
 - Outside compensation: tool center is offset by the cutter radius so the cut edge follows the outline.
 - Fields: Outline layer, Tool (default T4), Cutout depth (default `1.6 mm`), holding-tab count and width.
 - **Tab offset** (0–100% around the perimeter) rotates the evenly spaced tabs. Preview pan/zoom only — no drag handles on the board.
-
-Generate is a right-hand settings column; the board preview stays on the left.
+- Each step-down pass rapids back to the segment start before plunging, so open tab segments do not chord across a corner.
 
 ### Stage 4 — Convert
 - **Next step · Convert** writes `isolation.nc`, `drill.nc`, `outline.nc`, and merged `all.nc` from the Stage 3 plan.
-- Convert is three columns: board preview (50%), mill-order / G-code inspect (30%), then `.nc` file downloads (20%).
-- The middle pane switches between the job list and the selected file’s G-code.
+- Three columns: CNC path preview (50%), mill-order / G-code inspect (30%), file list (20%).
+- Middle pane switches between **Job list** and **G-code** for the selected file.
+- Job list is a table (`#`, Job, Tool). A tool change is its own mill-order step. Rows use a dark-blue background; no orange highlight bar.
+- File list download buttons are labeled **Download** (not “Download all.nc”).
+- Hide rapids remains available on this stage.
 
 ## Scope (current)
 
@@ -56,9 +65,11 @@ Generate is a right-hand settings column; the board preview stays on the left.
   - Optional board outline Gerber.
   - PAEN tool library (`PAEN_TOOLS.tlslibrary`) for machine tools.
 - Job-wide machining parameters:
+  - Board width / length: `100 mm` / `150 mm` (defaults).
   - Copper engrave depth: `0.15 mm` (default).
   - Drill depth: `1.6 mm` (default; also used for outline through-cut).
-  - Safe Z: `15 mm` (default).
+  - Clearance Height (Safe Z): `15 mm` (default).
+  - Retract Height: `3 mm` (default).
 - Per-tool PCB properties (from the library, PCB material only):
   - Spindle speed, step over, step down, feed rate, plunge rate, coolant.
 - Default selected tool: `#2` `0.2mm*30° Engraving (Metal)`.
@@ -83,10 +94,10 @@ Other library materials (copper, aluminum, wood, etc.) are ignored.
 
 1. Drag-drop PCB CAM zip (Gerber + drill).
 2. Render and preview layers on canvas (zoom, pan, fit-to-view, color toggles).
-3. Open Machine: pick a tool from the 5-column list (Number, Name, Type, Diameter, Tip Diameter).
-4. Remaining geometry and PCB cutting values appear in **Tool properties** below the table.
-5. Confirm copper engrave depth, drill depth, and safe Z.
-6. Generate: assign layer/tool/strategy per process, Preview on the board, then convert and download `.nc`.
+3. Open Board setting: confirm stock size, depths, and Safe Position.
+4. Pick a tool from the 5-column list; remaining values appear in **Tool properties**.
+5. Generate: assign layer/tool/strategy per process and Preview on the board (Hide rapids on if travel cluttered).
+6. Convert: inspect mill order or G-code, then download `.nc`.
 
 ## Proposed Architecture
 
@@ -115,13 +126,14 @@ flowchart LR
   1. Parse Gerber into preview rasters + bounds.
   2. Parse Excellon into drill hits.
   3. Generate isolation (contour or pocket), drill (plunge or hole-pocket), and outside outline with holding tabs.
-  4. Post-process to GRBL-compatible G-code with safe Z, selected-tool spindle/coolant, and tool changes.
+  4. Post-process to GRBL-compatible G-code with clearance/retract, selected-tool spindle/coolant, and tool changes.
 - Preview requirements:
   - Gerber layers visible immediately after upload.
   - Drill overlay toggleable.
   - Coordinate extents shown before generation.
   - Per-process toolpath overlay on the board canvas during Generate (Preview on).
-  - Toolpath verification graphic after Convert.
+  - Rapid (G0) moves hidden by default on Generate/Convert; not shown as a control on Stage 1.
+  - Convert inspects mill order and G-code instead of a bottom overview image.
 
 ## Project Structure
 
@@ -150,10 +162,11 @@ flowchart LR
 
 ## CNC Safety & Reliability Guardrails
 
-- Enforce configurable `safe_z` and retract between operations.
+- Enforce configurable clearance and retract between operations.
 - Copper engrave depth must not exceed drill depth.
 - Clamp feed/plunge/RPM from the selected tool to machine-safe ranges.
 - Emit coolant from the selected tool’s PCB property (`Y`/`N`).
+- Outline step-down must re-enter at the current segment start (no G1 across an open tab gap).
 
 ## Risks and Mitigations
 
@@ -165,6 +178,6 @@ flowchart LR
 ## Success Criteria
 
 - Stage 1: Dropping a sample Gerber zip shows copper + profile + drills with colors.
-- Stage 2: Machine step lists the six PAEN tools; selecting one shows PCB properties.
-- Stage 3: Generate writes `isolation.nc`, `drill.nc`, `outline.nc`, and `all.nc` from the per-process plan (contour/pocket copper, drill/pocket holes, outline tabs + offset).
-- Stage 4: One session completes zip → preview → machine → generate → download.
+- Stage 2: Board setting lists the six PAEN tools; selecting one shows PCB properties.
+- Stage 3: Preview overlays isolation (copper-following), drill/pocket holes, and outside outline with tabs; Hide rapids works on this stage only after paths exist.
+- Stage 4: Convert writes `isolation.nc`, `drill.nc`, `outline.nc`, and `all.nc`; mill order and G-code are inspectable; files download.
