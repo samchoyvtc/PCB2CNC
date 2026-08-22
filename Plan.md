@@ -4,19 +4,37 @@
 
 Create a local web-based workflow (inspired by [Carbide Copper](https://copper.carbide3d.com/)) to convert single-sided PCB files into CNC milling/drilling G-code with straightforward machine/tool configuration.
 
+## Delivery stages
+
+### Stage 1 — Colored Gerber + drill preview
+- Drag-drop a CAM `.zip` (Gerber RS-274X + Excellon).
+- Classify layers (copper, profile, mask, silk, drill).
+- Render multi-layer canvas preview with distinct colors and toggles.
+- Overlay Excellon drill hits (not finished machine G-code).
+
+### Stage 2 — Generate CNC G-code + verification graphic
+- Generate isolation / drill / outline `.nc` from the loaded job.
+- Use `pcb2gcode` when installed; otherwise the built-in contour generator.
+- Show a colored toolpath verification image.
+- Download split and merged `.nc` files.
+
+### Stage 3 — Combined convert workflow
+- One UI: zip → preview → machine settings → generate → verify → download.
+- Minimal settings: engrave depth, feed, spindle, safe Z, stock thickness.
+- Plan.md default engraving tool (#2, 0.15 mm depth, 12000 RPM, etc.).
+
 ## Scope (MVP)
 
 - Single-sided PCB job flow only (Top side only).
 - Inputs:
-  - Gerber RS-274X signal layer.
+  - Gerber RS-274X signal layer (from zip).
   - Excellon drill file.
   - Optional board outline Gerber.
-- User-configurable machining parameters:
-  - Material dimensions (X/Y/Z).
-  - Origin position.
-  - Tool diameter, spindle RPM, feed/plunge rates, cut depth.
-  - Isolation pass count.
-  - Operation-to-tool mapping with automatic tool changes.
+- User-configurable machining parameters (Stage 3 minimal set + defaults):
+  - Material / stock thickness.
+  - Tool diameter context via generator defaults.
+  - Spindle RPM, feed/plunge rates, cut depth, safe Z.
+  - Coolant enabled by default.
 - Default engraving operation setup:
   - Tool number: `2`
   - Tool type: `0.2mm x 30 degree` engraving bit (V-bit)
@@ -28,19 +46,17 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
   - Plunge rate: `200 mm/min`
   - Coolant: `enabled`
 - Outputs:
-  - One merged `.nc`/`.gcode` file.
-  - Optional separate files by operation (contour/isolation, drill, outline).
+  - One merged `.nc`/`.gcode` file (`all.nc`).
+  - Optional separate files by operation (`isolation.nc`, `drill.nc`, `outline.nc`).
 
-## User Workflow (Gerber First)
+## User Workflow
 
-1. Upload PCB Gerber layout file first.
-2. Render and preview the Gerber layout on canvas (zoom, pan, fit-to-view).
-3. Validate Gerber file parse success and show clear errors if invalid.
-4. Upload Excellon drill file and align to Gerber coordinates.
-5. Optionally upload board outline file.
-6. Configure tool and machine parameters.
-  - Pre-fill engraving operation with Tool #2 and 0.15mm depth.
-7. Generate and download G-code (single or split files).
+1. Drag-drop PCB CAM zip (Gerber + drill).
+2. Render and preview layers on canvas (zoom, pan, fit-to-view, color toggles).
+3. Validate parse success and show clear errors if invalid.
+4. Confirm machine parameters (defaults pre-filled).
+5. Generate G-code and inspect verification graphic.
+6. Download merged and/or split `.nc` files.
 
 ## Proposed Architecture
 
@@ -56,59 +72,33 @@ flowchart LR
   files --> ui
 ```
 
-
-
 ## Technical Approach
 
-- Backend: Python + FastAPI.
-- Frontend: lightweight HTML/JS first (upgradeable later).
+- Backend: Python + FastAPI (`backend/app`).
+- Frontend: lightweight HTML/JS (`frontend/`).
+- Preview: **pygerber** raster layers + Excellon hole overlay.
+- CAM: **pcb2gcode** CLI when present; otherwise builtin OpenCV contour toolpaths.
 - Geometry/processing pipeline:
-  1. Parse Gerber into normalized geometry and preview payload.
+  1. Parse Gerber into preview rasters + bounds.
   2. Parse Excellon into drill hits.
-  3. Generate isolation contours from copper primitives using tool diameter + pass-count offset logic.
-  4. Convert drill hits into drill toolpaths.
-  5. Optionally route board outline.
-  6. Post-process to GRBL-compatible G-code with safe Z moves, spindle commands, unit mode, and automatic tool-change commands by operation.
+  3. Generate isolation / outline contours and drill cycles.
+  4. Post-process to GRBL-compatible G-code with safe Z, spindle, coolant, tool changes.
 - Preview requirements:
-  - Gerber layer visible immediately after upload.
-  - Drill/outline overlays can be toggled after those files are loaded.
-  - Coordinate system and board extents shown for user confidence before generation.
-  - Show calculated pass settings (step over/step down) and estimated pass count for engraving.
+  - Gerber layers visible immediately after upload.
+  - Drill overlay toggleable.
+  - Coordinate extents shown before generation.
+  - Toolpath verification graphic after generation.
 
-## MVP Milestones
-
-1. **Foundation & Data Model**
-  - Define job schema for uploads + machine params.
-  - Define operation schema (isolation/drill/outline).
-2. **Gerber Upload + Preview First**
-  - Implement Gerber upload endpoint and parsing.
-  - Implement preview API response and frontend canvas rendering.
-  - Add parse/error handling UX.
-3. **Parsing Layer Completion**
-  - Add Excellon parser integration.
-  - Add optional outline parser integration.
-4. **Toolpath Generation**
-  - Isolation contour pass generation.
-  - Drill path generation.
-  - Optional outline pass generation.
-5. **Post Processor**
-  - GRBL output generator.
-  - Emit tool-change instructions per operation (e.g., engraving, drilling, outline) for auto tool changer workflows.
-  - Single-file merge and optional split-file output.
-6. **Verification**
-  - Golden sample test fixtures (known Gerber+Excellon to expected path checks).
-  - Dry-run checks in CAM simulator.
-
-## Recommended Project Structure
+## Project Structure
 
 - `backend/`
   - `app/main.py` (FastAPI entry)
   - `app/models.py` (request/response schemas)
+  - `app/services/zip_ingest.py`
   - `app/services/parser.py`
   - `app/services/preview.py`
   - `app/services/toolpath.py`
   - `app/services/postprocess.py`
-  - `app/services/estimate.py`
   - `tests/`
 - `frontend/`
   - `index.html`
@@ -116,37 +106,25 @@ flowchart LR
   - `src/preview.js`
   - `src/settings.js`
   - `src/output.js`
-- `samples/`
-  - reference Gerber/Excellon fixtures for regression tests
+  - `src/app.js`
+- `samples/` — `TEST_Gerber.zip`, `CAMOutputs/`, reference `nc_files/`
+- `data/jobs/` — runtime upload workspace
 
 ## CNC Safety & Reliability Guardrails
 
 - Enforce configurable `safe_z` and retract between operations.
 - Validate max depth against material thickness.
 - Clamp feed/plunge/RPM to machine-safe ranges.
-- Add a machine profile preset system (start with one profile, extensible later).
-- Validate tool assignments before generation and ensure Tool #2 engraving defaults are present unless explicitly changed by user.
-- Validate coolant command compatibility with selected controller profile and emit proper coolant on/off commands.
+- Validate coolant command emission for the controller profile.
 
 ## Risks and Mitigations
 
-- **Gerber format edge cases**: start with strict RS-274X subset + clear error messages.
-- **Geometry robustness**: use proven geometry libraries and keep operations deterministic.
-- **Machine differences**: isolate postprocessor settings in profile config.
-- **Preview mismatch risk**: use the same normalized geometry source for preview and toolpath generation.
-
-## Deliverables
-
-- Working local web app for single-sided PCB to G-code conversion.
-- Gerber-first guided UX with immediate layout preview.
-- Downloadable `.nc` output for CNC controller.
-- Basic test suite and sample fixtures.
-- User README for expected input files and safe machine setup.
+- **Gerber format edge cases**: start with RS-274X via pygerber + clear error messages.
+- **pcb2gcode missing**: automatic fallback to builtin generator.
+- **Preview mismatch risk**: same job CAM files feed preview and generation.
 
 ## Success Criteria
 
-- User can upload Gerber first and visually confirm the board layout within 10 seconds.
-- User can upload drill file, configure parameters, and export valid G-code in under 3 minutes.
-- Output runs in simulator without syntax/path errors.
-- At least 3 sample boards generate repeatable, deterministic output.
-
+- Stage 1: Dropping `samples/TEST_Gerber.zip` shows copper + profile + drills with colors.
+- Stage 2: Generate produces non-empty `.nc` plus verification PNG.
+- Stage 3: One session completes zip → preview → generate → download.
