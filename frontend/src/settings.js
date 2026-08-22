@@ -1,20 +1,18 @@
 /** Machine settings form helpers. */
 
-import { getSelectedToolNumber } from "./tools.js";
+import { getSelectedToolCuts, getSelectedToolNumber } from "./tools.js";
 
 export function readSettings(form) {
   const num = (id) => {
     const el = form.elements[id];
     return el ? Number(el.value) : NaN;
   };
+  const cuts = getSelectedToolCuts();
   return {
     tool_number: getSelectedToolNumber(2),
     engraving_depth_mm: num("engraving_depth_mm"),
-    feed_mm_min: num("feed_mm_min"),
-    spindle_rpm: num("spindle_rpm"),
+    drill_depth_mm: Number.isFinite(num("drill_depth_mm")) ? num("drill_depth_mm") : 1.6,
     safe_z_mm: num("safe_z_mm"),
-    stock_thickness_mm: num("stock_thickness_mm"),
-    plunge_mm_min: Number.isFinite(num("plunge_mm_min")) ? num("plunge_mm_min") : 200,
-    coolant: true,
+    ...cuts,
   };
 }

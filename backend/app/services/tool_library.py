@@ -7,6 +7,7 @@ import io
 import json
 import re
 import sqlite3
+import struct
 import sys
 import tempfile
 import zipfile
@@ -33,7 +34,15 @@ PREFERRED_COLUMNS = (
     "geometry",
     "diameter",
     "diameter_mm",
+    "Diameter(D)",
+    "Angle(A)",
     "tip",
+    "Tip Diameter(F)",
+    "Half Angle(A)",
+    "CornerRadius(R)",
+    "Specification",
+    "Screw pitch",
+    "Hole Diameter",
     "angle",
     "flutes",
     "feed",
@@ -46,9 +55,38 @@ PREFERRED_COLUMNS = (
     "depth",
     "depth_mm",
     "stepover",
+    "Material",
+    "Spindle Speed",
+    "Step Over",
+    "Step Down",
+    "Feed Rate",
+    "Plunge Rate",
+    "Coolant",
     "notes",
     "description",
 )
+
+_PAEN_MAGIC = b"\x00\x00\x00\x01\xff\xff\xff\xff"
+_PAEN_GUID_PREFIX = b"\x00\x00\x00\x4c\x00\x7b"
+_PAEN_MATERIAL_NAMES = frozenset(
+    {
+        "copper",
+        "aluminum",
+        "plastic",
+        "pcb",
+        "softwood",
+        "hardwood",
+        "brass",
+        "carbon fiber",
+        "paen tools",
+    }
+)
+_PAEN_TYPE_NAMES = {
+    1: "Flat End",
+    2: "Ball End",
+    3: "Engraving",
+    4: "Drill",
+}
 
 _TOOLISH_KEYS = {
     "diameter",
@@ -114,6 +152,12 @@ def parse_tool_library_bytes(data: bytes, filename: str = "library") -> tuple[li
         if rows:
             return _normalize_rows(rows)
 
+    # PAEN / MillMage-style binary .tlslibrary (UTF-16-BE length-prefixed records)
+    if _looks_like_paen_library(data):
+        rows = _rows_from_paen_library(data)
+        if rows:
+            return _normalize_rows(rows)
+
     text = _decode_text(data)
     stripped = text.lstrip("\ufeff").strip()
     if not stripped:
@@ -172,6 +216,149 @@ def save_uploaded_library(data: bytes, dest: Path | None = None) -> Path:
     target.write_bytes(data)
     parse_tool_library_bytes(data, target.name)
     return target
+
+
+def _looks_like_paen_library(data: bytes) -> bool:
+    if len(data) < 16:
+        return False
+    if data[:8] == _PAEN_MAGIC:
+        return True
+    return _PAEN_GUID_PREFIX in data[:4096] and b"\x00P\x00A\x00E\x00N" in data[:4096]
+
+
+def _paen_u32(data: bytes, offset: int) -> int:
+    return struct.unpack_from(">I", data, offset)[0]
+
+
+def _paen_i32(data: bytes, offset: int) -> int:
+    return struct.unpack_from(">i", data, offset)[0]
+
+
+def _paen_f64(data: bytes, offset: int) -> float:
+    return struct.unpack_from(">d", data, offset)[0]
+
+
+def _paen_str(data: bytes, offset: int) -> tuple[str | None, int]:
+    if offset + 4 > len(data):
+        raise ValueError("truncated PAEN string")
+    nbytes = _paen_u32(data, offset)
+    if nbytes == 0xFFFFFFFF:
+        return None, offset + 4
+    if nbytes > 4000 or nbytes % 2 != 0 or offset + 4 + nbytes > len(data):
+        raise ValueError("invalid PAEN string")
+    raw = data[offset + 4 : offset + 4 + nbytes]
+    text = raw.decode("utf-16-be") if nbytes else ""
+    return text, offset + 4 + nbytes
+
+
+def _paen_short_number(value: float) -> float | int:
+    rounded = round(float(value), 4)
+    if abs(rounded - round(rounded)) < 1e-9:
+        return int(round(rounded))
+    return rounded
+
+
+def _paen_display_name(name: str) -> str:
+    return re.sub(r"(?<=\S)\(", " (", name).strip()
+
+
+def _rows_from_paen_library(data: bytes) -> list[dict[str, Any]]:
+    """Extract tool table rows from a PAEN binary .tlslibrary.
+
+    Records are UTF-16-BE length-prefixed. 3D mesh blobs after each tool are
+    skipped by scanning for the next GUID header rather than walking them.
+    """
+    rows: list[dict[str, Any]] = []
+    seen_numbers: set[int] = set()
+    idx = 0
+    while True:
+        start = data.find(_PAEN_GUID_PREFIX, idx)
+        if start < 0:
+            break
+        idx = start + 1
+        try:
+            guid, after_guid = _paen_str(data, start)
+            name, after_name = _paen_str(data, after_guid)
+        except ValueError:
+            continue
+        if not guid or not guid.startswith("{") or guid.count("-") != 4:
+            continue
+        if not name or name.startswith("{") or name.lower() in _PAEN_MATERIAL_NAMES:
+            continue
+        header_end = after_name + 8 + 64
+        if header_end + 4 > len(data):
+            continue
+        number = _paen_u32(data, after_name)
+        type_id = _paen_u32(data, after_name + 4)
+        if not (1 <= number <= 99 and type_id <= 20):
+            continue
+        geom = [_paen_f64(data, after_name + 8 + i * 8) for i in range(8)]
+        if not (0 <= geom[0] <= 50 and 0 <= geom[2] <= 50):
+            continue
+        if number in seen_numbers:
+            continue
+        seen_numbers.add(number)
+        row: dict[str, Any] = {
+            "Number": number,
+            "Name": _paen_display_name(name),
+            "Type": _PAEN_TYPE_NAMES.get(type_id, str(type_id)),
+            "Diameter(D)": _paen_short_number(geom[0]),
+            "Angle(A)": _paen_short_number(geom[1]),
+            "Tip Diameter(F)": _paen_short_number(geom[2]),
+            "Half Angle(A)": _paen_short_number(geom[3]),
+            "CornerRadius(R)": _paen_short_number(geom[4]),
+            "Specification": _paen_short_number(geom[5]),
+            "Screw pitch": _paen_short_number(geom[6]),
+            "Hole Diameter": _paen_short_number(geom[7]),
+        }
+        cuts = _paen_pcb_cuts(data, header_end)
+        if cuts:
+            row.update(cuts)
+        rows.append(row)
+        idx = header_end
+    rows.sort(key=lambda r: int(r.get("Number") or 0))
+    return rows
+
+
+def _paen_pcb_cuts(data: bytes, nmat_offset: int) -> dict[str, Any]:
+    """PCB-only cutting properties that follow each tool's geometry block."""
+    try:
+        nmat = _paen_u32(data, nmat_offset)
+    except struct.error:
+        return {}
+    if nmat == 0 or nmat > 32:
+        return {}
+    offset = nmat_offset + 4
+    for _ in range(nmat):
+        try:
+            _g1, offset = _paen_str(data, offset)
+            _g2, offset = _paen_str(data, offset)
+            material, offset = _paen_str(data, offset)
+            if offset + 36 > len(data):
+                break
+            spindle = _paen_i32(data, offset)
+            feed = _paen_i32(data, offset + 4)
+            plunge = _paen_i32(data, offset + 8)
+            stepover = _paen_f64(data, offset + 12)
+            stepdown = _paen_f64(data, offset + 20)
+            coolant = _paen_i32(data, offset + 28)
+            offset += 36
+        except (ValueError, struct.error):
+            break
+        if (material or "").strip().lower() != "pcb":
+            continue
+        if not (1000 <= spindle <= 60000 and 0 < feed <= 10000 and 0 < plunge <= 3000):
+            continue
+        return {
+            "Material": "PCB",
+            "Spindle Speed": spindle,
+            "Step Over": _paen_short_number(stepover),
+            "Step Down": _paen_short_number(stepdown),
+            "Feed Rate": feed,
+            "Plunge Rate": plunge,
+            "Coolant": "Y" if coolant else "N",
+        }
+    return {}
 
 
 def _decode_text(data: bytes) -> str:
@@ -507,8 +694,8 @@ def _normalize_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], l
         if out:
             cleaned.append(out)
 
-    preferred = [k for k in PREFERRED_COLUMNS if k in seen]
     lower_map = {k.lower(): k for k in key_set}
+    preferred = []
     for pref in PREFERRED_COLUMNS:
         actual = lower_map.get(pref.lower())
         if actual and actual not in preferred:

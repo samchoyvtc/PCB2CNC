@@ -5,19 +5,21 @@ Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer pr
 ## Stages
 
 1. **Preview** — drag-drop zip, colored Gerber layers + drill overlay  
-2. **Generate** — isolation / drill / outline G-code + verification graphic  
-3. **Convert** — combined UI with minimal machine settings and downloads  
+2. **Machine** — pick a PAEN tool; set copper engrave depth, drill depth, and safe Z  
+3. **Generate** — isolation / drill / outline G-code from the selected tool’s PCB properties  
+4. **Convert** — verification graphic + downloads  
 
 ## Quick start
 
 ```bash
-cd /workspace
 python3 -m pip install -r backend/requirements.txt
 cd backend
 PYTHONPATH=. python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open http://127.0.0.1:8000 and drop `samples/TEST_Gerber.zip`.
+Open http://127.0.0.1:8000 and drop a CAM zip from `samples/`.
+
+Place `PAEN_TOOLS.tlslibrary` in the repo root (or upload it on the Machine step) so the six machine tools load. Cutting feeds come from each tool’s PCB material row.
 
 Optional: install [pcb2gcode](https://github.com/pcb2gcode/pcb2gcode) on `PATH` for CAM generation; otherwise the built-in contour generator is used.
 

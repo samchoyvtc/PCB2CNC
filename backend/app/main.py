@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from app.models import (
     GenerateRequest,
@@ -179,5 +180,12 @@ def download_nc(job_id: str, filename: str) -> FileResponse:
 
 
 # Static frontend last so API routes take precedence
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+
 if FRONTEND.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND), html=True), name="frontend")
+    app.mount("/", NoCacheStaticFiles(directory=str(FRONTEND), html=True), name="frontend")

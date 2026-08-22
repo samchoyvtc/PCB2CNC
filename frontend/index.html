@@ -204,7 +204,7 @@
     }
     .tools-table-wrap {
       overflow: auto;
-      max-height: min(55vh, 520px);
+      max-height: min(40vh, 360px);
       border: 1px solid var(--line);
       border-radius: 10px;
       background: rgba(7, 11, 20, 0.45);
@@ -212,7 +212,8 @@
     .tools-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.75rem;
+      font-size: 0.8rem;
+      table-layout: auto;
     }
     .tools-table th,
     .tools-table td {
@@ -234,6 +235,10 @@
       color: var(--text);
       font-family: "JetBrains Mono", monospace;
     }
+    .tools-table td.col-name {
+      white-space: normal;
+      min-width: 10rem;
+    }
     .tools-table tr.is-selected td {
       background: rgba(56, 189, 248, 0.12);
     }
@@ -244,6 +249,48 @@
       padding: 1rem;
       color: var(--muted);
       font-size: 0.85rem;
+    }
+    .tool-props {
+      margin-top: 1.15rem;
+    }
+    .tool-props h2 {
+      margin-bottom: 0.35rem;
+    }
+    .prop-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+      gap: 0.75rem 0.9rem;
+      margin: 0.55rem 0 0;
+      padding: 0.9rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(7, 11, 20, 0.45);
+    }
+    .prop-grid .prop-heading {
+      grid-column: 1 / -1;
+      margin: 0.15rem 0 0;
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent2);
+    }
+    .prop-grid .prop-heading + .prop-heading,
+    .prop-grid .prop-item + .prop-heading {
+      margin-top: 0.35rem;
+    }
+    .prop-item .prop-label {
+      margin: 0;
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .prop-item .prop-value {
+      margin: 0.12rem 0 0;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.86rem;
+      color: var(--text);
     }
     .machine-grid {
       display: grid;
@@ -589,6 +636,14 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    .field.field-check {
+      grid-template-columns: 1fr auto;
+      align-items: center;
+    }
+    .field.field-check input {
+      width: auto;
+      justify-self: end;
+    }
     .field input {
       width: 100%;
       border-radius: 8px;
@@ -686,24 +741,16 @@
             <h2>2 · Machine settings</h2>
             <form id="settings-form">
               <div class="field">
-                <label for="engraving_depth_mm">Engrave depth (mm)</label>
+                <label for="engraving_depth_mm">Copper engrave depth (mm)</label>
                 <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
               </div>
               <div class="field">
-                <label for="feed_mm_min">Feed (mm/min)</label>
-                <input id="feed_mm_min" name="feed_mm_min" type="number" step="10" value="2000" />
-              </div>
-              <div class="field">
-                <label for="spindle_rpm">Spindle RPM</label>
-                <input id="spindle_rpm" name="spindle_rpm" type="number" step="100" value="12000" />
+                <label for="drill_depth_mm">Drill depth (mm)</label>
+                <input id="drill_depth_mm" name="drill_depth_mm" type="number" step="0.01" value="1.6" />
               </div>
               <div class="field">
                 <label for="safe_z_mm">Safe Z (mm)</label>
                 <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
-              </div>
-              <div class="field">
-                <label for="stock_thickness_mm">Stock thickness (mm)</label>
-                <input id="stock_thickness_mm" name="stock_thickness_mm" type="number" step="0.1" value="1.5" />
               </div>
             </form>
           </div>
@@ -724,6 +771,11 @@
                 <tbody></tbody>
               </table>
             </div>
+            <section class="tool-props" id="tool-props" hidden>
+              <h2>Tool properties</h2>
+              <p class="tools-meta" id="tool-props-meta"></p>
+              <div class="prop-grid" id="tool-props-grid"></div>
+            </section>
           </div>
         </div>
 
@@ -736,6 +788,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js"></script>
+  <script type="module" src="/src/app.js?v=machine-depths-1"></script>
 </body>
 </html>

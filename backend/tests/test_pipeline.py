@@ -112,7 +112,7 @@ def test_upload_preview_generate(sample_zip_bytes: bytes):
                 "feed_mm_min": 2000,
                 "spindle_rpm": 12000,
                 "safe_z_mm": 15,
-                "stock_thickness_mm": 1.5,
+                "drill_depth_mm": 1.6,
             }
         },
     )

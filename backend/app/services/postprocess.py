@@ -13,7 +13,7 @@ def _header(settings: MachineSettings, title: str) -> list[str]:
         "%",
         f"; {title}",
         "; Material: PCB",
-        f"; Stock thickness: {settings.stock_thickness_mm} mm",
+        f"; Drill depth: {settings.drill_depth_mm} mm",
         f"; Safe Z: {settings.safe_z_mm} mm",
         "G90 G21",
         "G17",
@@ -38,7 +38,7 @@ def write_path_nc(
     include_header: bool = True,
     step_down_mm: float | None = None,
 ) -> None:
-    step = step_down_mm or min(0.1, depth_mm)
+    step = step_down_mm or settings.step_down_mm or min(0.1, depth_mm)
     lines: list[str] = []
     if include_header:
         lines.extend(_header(settings, operation))

@@ -12,11 +12,13 @@ class MachineSettings(BaseModel):
 
     tool_number: int = 2
     engraving_depth_mm: float = Field(0.15, gt=0, le=5)
+    drill_depth_mm: float = Field(1.6, gt=0, le=20)
     spindle_rpm: int = Field(12000, ge=1000, le=60000)
     feed_mm_min: float = Field(2000, gt=0, le=10000)
     plunge_mm_min: float = Field(200, gt=0, le=3000)
+    step_over_percent: float = Field(50.0, gt=0, le=100)
+    step_down_mm: float = Field(0.1, gt=0, le=5)
     safe_z_mm: float = Field(15.0, ge=1, le=100)
-    stock_thickness_mm: float = Field(1.5, gt=0, le=20)
     coolant: bool = True
 
 

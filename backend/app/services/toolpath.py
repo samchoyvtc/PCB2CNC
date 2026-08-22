@@ -55,7 +55,7 @@ def _run_pcb2gcode(
         f"--mill-speed={settings.spindle_rpm}",
         f"--drill-feed={settings.plunge_mm_min}",
         f"--drill-speed={settings.spindle_rpm}",
-        f"--zdrill=-{min(settings.engraving_depth_mm + 0.1, settings.stock_thickness_mm)}",
+        f"--zdrill=-{settings.drill_depth_mm}",
         f"--outdir={out_dir}",
     ]
     if "drill" in files:
@@ -63,7 +63,7 @@ def _run_pcb2gcode(
     if "profile" in files:
         cmd.append(f"--outline={files['profile']}")
         cmd.append(f"--cutter-diameter=1.0")
-        cmd.append(f"--zcut=-{settings.stock_thickness_mm}")
+        cmd.append(f"--zcut=-{settings.drill_depth_mm}")
 
     logger.info("Running pcb2gcode: %s", " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -153,18 +153,18 @@ def _builtin_generate(
             tool_number=settings.tool_number,
             depth_mm=settings.engraving_depth_mm,
             include_header=True,
+            step_down_mm=settings.step_down_mm,
         )
         produced.append("isolation.nc")
 
     if "drill" in files:
         hits = parser.parse_excellon(files["drill"])
-        drill_depth = min(settings.stock_thickness_mm + 0.1, settings.stock_thickness_mm + 0.2)
         drill_path = out_dir / "drill.nc"
         write_drill_nc(
             drill_path,
             hits,
             settings=settings,
-            depth_mm=drill_depth,
+            depth_mm=settings.drill_depth_mm,
             tool_number=4,
             include_header=True,
         )
@@ -181,7 +181,7 @@ def _builtin_generate(
             settings=settings,
             operation="Board Outline",
             tool_number=4,
-            depth_mm=settings.stock_thickness_mm,
+            depth_mm=settings.drill_depth_mm,
             include_header=True,
             step_down_mm=0.4,
         )
@@ -201,9 +201,8 @@ def _builtin_generate(
 
 def generate_toolpaths(job_id: str, settings: MachineSettings | None = None) -> dict[str, Any]:
     settings = settings or MachineSettings()
-    # Safety clamps
-    if settings.engraving_depth_mm > settings.stock_thickness_mm:
-        raise ValueError("Engraving depth exceeds stock thickness")
+    if settings.engraving_depth_mm > settings.drill_depth_mm:
+        raise ValueError("Copper engrave depth exceeds drill depth")
     settings.spindle_rpm = max(1000, min(settings.spindle_rpm, 60000))
     settings.feed_mm_min = max(50.0, min(settings.feed_mm_min, 10000.0))
     settings.plunge_mm_min = max(20.0, min(settings.plunge_mm_min, 3000.0))
