@@ -22,7 +22,7 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Use `pcb2gcode` when installed; otherwise the built-in contour generator.
 - Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
 - Overlay colored toolpaths on the Stage 1 board preview (Preview on each process card).
-- Download split and merged `.nc` files.
+- Convert (Stage 4) writes the downloadable `.nc` files from this plan.
 
 **1 · Copper trace engraving**
 - Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a board outline, leaving traces).
@@ -43,7 +43,9 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 Generate is a right-hand settings column; the board preview stays on the left.
 
 ### Stage 4 — Convert
-- One session: zip → preview → machine → generate → verify → download.
+- **Next step · Convert** writes `isolation.nc`, `drill.nc`, `outline.nc`, and merged `all.nc` from the Stage 3 plan.
+- Convert is three columns: board preview (50%), mill-order / G-code inspect (30%), then `.nc` file downloads (20%).
+- The middle pane switches between the job list and the selected file’s G-code.
 
 ## Scope (current)
 

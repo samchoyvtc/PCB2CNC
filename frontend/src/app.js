@@ -1,7 +1,7 @@
 import { setupDropzone, uploadZip } from "./upload.js";
 import { BoardPreview, renderLayerToggles } from "./preview.js";
 import { readSettings } from "./settings.js";
-import { generateJob, renderDownloads, showToolpathPreview } from "./output.js";
+import { fetchNcText, generateJob, parseNcJobSequence, renderDownloads, renderJobSequence, sortNcNames } from "./output.js";
 import {
   getSelectedToolNumber,
   listMachineTools,
@@ -14,7 +14,12 @@ const statusEl = document.getElementById("status");
 const fileListEl = document.getElementById("file-list");
 const layerTogglesEl = document.getElementById("layer-toggles");
 const downloadsEl = document.getElementById("downloads");
-const toolpathImg = document.getElementById("toolpath-preview");
+const gcodeInspect = document.getElementById("gcode-inspect");
+const gcodeInspectName = document.getElementById("gcode-inspect-name");
+const gcodeInspectMeta = document.getElementById("gcode-inspect-meta");
+const gcodeInspectBody = document.getElementById("gcode-inspect-body");
+const gcodeSequence = document.getElementById("gcode-sequence");
+const gcodeSequenceBody = document.getElementById("gcode-sequence-body");
 const btnNext = document.getElementById("btn-next");
 const btnReset = document.getElementById("btn-reset");
 const btnResetHeader = document.getElementById("btn-reset-header");
@@ -26,7 +31,8 @@ const panelLayers = document.getElementById("panel-layers");
 const panelMachineWrap = document.getElementById("panel-machine-wrap");
 const panelMachine = document.getElementById("panel-machine");
 const panelGenerateWrap = document.getElementById("panel-generate-wrap");
-const convertSection = document.getElementById("convert-section");
+const panelJobsWrap = document.getElementById("panel-jobs-wrap");
+const panelConvertWrap = document.getElementById("panel-convert-wrap");
 const progressWrap = document.getElementById("progress-wrap");
 const progressFill = document.getElementById("progress-fill");
 const progressLabel = document.getElementById("progress-label");
@@ -48,7 +54,7 @@ const NEXT_LABELS = {
   1: "Next step · Machine",
   2: "Next step · Generate",
   3: "Next step · Convert",
-  4: "Done · Convert ready",
+  4: "Download",
 };
 
 let jobId = null;
@@ -57,6 +63,8 @@ let busy = false;
 let toolsLoaded = false;
 let lastPreview = null;
 let generateMountedFor = null;
+let lastConvert = null;
+let inspectMode = "jobs";
 const board = new BoardPreview(document.getElementById("board-canvas"));
 
 function setStatus(message, kind = "") {
@@ -65,6 +73,18 @@ function setStatus(message, kind = "") {
 }
 
 function updateNextButton() {
+  const onGenerate = panelGenerateWrap && !panelGenerateWrap.hidden;
+  const onConvert = panelConvertWrap && !panelConvertWrap.hidden;
+  if (onGenerate) {
+    btnNext.textContent = "Next step · Convert";
+    btnNext.disabled = !jobId || busy;
+    return;
+  }
+  if (onConvert) {
+    btnNext.textContent = "Download";
+    btnNext.disabled = !jobId || busy || !lastConvert;
+    return;
+  }
   btnNext.textContent = NEXT_LABELS[currentStage] || "Next step";
   btnNext.disabled = !jobId || busy || currentStage >= 4;
 }
@@ -89,11 +109,12 @@ function resetJob() {
   busy = false;
   lastPreview = null;
   generateMountedFor = null;
+  lastConvert = null;
   fileInput.value = "";
   fileListEl.innerHTML = "";
   layerTogglesEl.innerHTML = "";
   downloadsEl.innerHTML = "";
-  showToolpathPreview(toolpathImg, null);
+  clearGcodeInspect();
   board.clear();
   setResetEnabled(false);
   setProgress(false);
@@ -109,9 +130,6 @@ function setStage(n) {
     el.classList.toggle("active", stage <= n);
     el.classList.toggle("is-locked", !jobId && stage > 1);
   });
-  if (convertSection) {
-    convertSection.hidden = n < 4;
-  }
   updateNextButton();
 }
 
@@ -130,18 +148,22 @@ function setPreviewHeading(text) {
 function showPanel(tab) {
   const isMachine = tab === "machine";
   const isGenerate = tab === "generate";
+  const isConvert = tab === "convert";
   document.body.classList.toggle("view-machine", isMachine);
   document.body.classList.toggle("view-generate", isGenerate);
+  document.body.classList.toggle("view-convert", isConvert);
   document.body.classList.toggle("view-preview", !isMachine);
 
-  panelInput.hidden = isMachine || isGenerate;
+  panelInput.hidden = isMachine || isGenerate || isConvert;
   panelPreview.hidden = isMachine;
-  panelLayers.hidden = isMachine || isGenerate;
+  panelLayers.hidden = isMachine || isGenerate || isConvert;
   panelMachineWrap.hidden = !isMachine;
   panelMachine.hidden = !isMachine;
   if (panelGenerateWrap) panelGenerateWrap.hidden = !isGenerate;
+  if (panelJobsWrap) panelJobsWrap.hidden = !isConvert;
+  if (panelConvertWrap) panelConvertWrap.hidden = !isConvert;
 
-  if (!isGenerate) {
+  if (!isGenerate && !isConvert) {
     board.setToolpaths([]);
     if (panelGenerateWrap) panelGenerateWrap._overlays = {};
     setPreviewHeading("Board preview");
@@ -156,9 +178,10 @@ function showPanel(tab) {
   if (!isMachine) {
     requestAnimationFrame(() => {
       board.resize();
-      if (isGenerate || tab === "layers") board.fit();
+      if (isGenerate || isConvert || tab === "layers") board.fit();
     });
   }
+  updateNextButton();
 }
 
 async function ensureToolsLoaded() {
@@ -208,7 +231,7 @@ function goGenerate() {
     return;
   }
   showPanel("generate");
-  if (currentStage < 4) setStage(3);
+  setStage(3);
 }
 
 function generatePreviewCtx() {
@@ -350,7 +373,8 @@ async function onZip(file) {
     busy = true;
     updateNextButton();
     downloadsEl.innerHTML = "";
-    showToolpathPreview(toolpathImg, null);
+    clearGcodeInspect();
+    lastConvert = null;
     setProgress(true, 5, "Uploading zip…", "5%");
     const uploaded = await uploadZip(file);
     jobId = uploaded.job_id;
@@ -367,28 +391,175 @@ async function onZip(file) {
   }
 }
 
+function planHasWork(plan) {
+  return !!(plan?.copper || (plan?.drills && plan.drills.length) || plan?.outline);
+}
+
+function clearGcodeInspect() {
+  if (gcodeInspect) gcodeInspect.hidden = true;
+  if (gcodeInspectName) gcodeInspectName.textContent = "";
+  if (gcodeInspectMeta) gcodeInspectMeta.textContent = "";
+  if (gcodeInspectBody) {
+    gcodeInspectBody.hidden = false;
+    gcodeInspectBody.textContent = "";
+  }
+  if (gcodeSequence) gcodeSequence.hidden = true;
+  if (gcodeSequenceBody) gcodeSequenceBody.replaceChildren();
+}
+
+function overlayConvertedPaths(name) {
+  const paths = lastConvert?.paths || [];
+  const shown = !name || name === "all.nc" ? paths : paths.filter((path) => path.file === name);
+  board.setToolpaths(shown);
+  setPreviewHeading(!name || name === "all.nc" ? "CNC path · Converted" : `CNC path · ${name}`);
+}
+
+function markSelectedDownload(name) {
+  for (const li of downloadsEl.querySelectorAll("li")) {
+    const selected = li.dataset.name === name;
+    li.classList.toggle("is-selected", selected);
+    li.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+}
+
+let inspectSeq = 0;
+
+function applyInspectView() {
+  const wantJobs = inspectMode === "jobs";
+  const hasJobs = Boolean(gcodeSequenceBody?.children.length);
+  if (gcodeSequence) gcodeSequence.hidden = !wantJobs;
+  if (gcodeInspectBody) gcodeInspectBody.hidden = wantJobs;
+  if (!gcodeInspectMeta) return;
+  if (wantJobs) {
+    const n = gcodeSequenceBody?.children.length || 0;
+    gcodeInspectMeta.textContent = hasJobs
+      ? `${n} step${n === 1 ? "" : "s"} · mill order`
+      : "No mill-order steps in this file";
+    return;
+  }
+  const text = gcodeInspectBody?.textContent || "";
+  const lines = text ? text.split(/\r?\n/).length : 0;
+  gcodeInspectMeta.textContent = `${lines.toLocaleString()} lines`;
+}
+
+function showGcodeText(name, text) {
+  if (gcodeInspect) gcodeInspect.hidden = false;
+  if (gcodeInspectName) gcodeInspectName.textContent = name;
+  const steps = parseNcJobSequence(text);
+  if (gcodeSequenceBody) {
+    if (steps.length) renderJobSequence(gcodeSequenceBody, steps, listMachineTools());
+    else gcodeSequenceBody.replaceChildren();
+  }
+  if (gcodeInspectBody) {
+    gcodeInspectBody.textContent = text || "";
+    gcodeInspectBody.scrollTop = 0;
+  }
+  applyInspectView();
+}
+
+async function inspectNc(name) {
+  if (!jobId || !lastConvert || !name) return;
+  await ensureToolsLoaded();
+  const cached = lastConvert.gcode[name];
+  const sameFile = lastConvert.selected === name && cached != null && gcodeInspect && !gcodeInspect.hidden;
+  lastConvert.selected = name;
+  markSelectedDownload(name);
+  overlayConvertedPaths(name);
+  if (sameFile) return;
+  if (cached != null) {
+    showGcodeText(name, cached);
+    return;
+  }
+  const seq = ++inspectSeq;
+  if (gcodeInspect) gcodeInspect.hidden = false;
+  if (gcodeInspectName) gcodeInspectName.textContent = name;
+  if (gcodeInspectMeta) gcodeInspectMeta.textContent = "Loading…";
+  if (gcodeInspectBody) gcodeInspectBody.textContent = "";
+  try {
+    lastConvert.gcode[name] = await fetchNcText(jobId, name);
+    if (seq !== inspectSeq) return;
+    showGcodeText(name, lastConvert.gcode[name] || "");
+  } catch (err) {
+    if (seq !== inspectSeq) return;
+    if (gcodeInspectBody) gcodeInspectBody.textContent = "";
+    if (gcodeInspectMeta) gcodeInspectMeta.textContent = err.message || String(err);
+  }
+}
+
+function applyConvertResult(result) {
+  const files = result.files || [];
+  const names = sortNcNames(files);
+  lastConvert = {
+    files,
+    paths: result.paths || [],
+    selected: names.includes("all.nc") ? "all.nc" : names[0] || "",
+    gcode: {},
+  };
+  renderDownloads(downloadsEl, jobId, lastConvert.files, {
+    selected: lastConvert.selected,
+    onSelect: (name) => {
+      void inspectNc(name);
+    },
+  });
+  const lede = document.getElementById("convert-lede");
+  if (lede) {
+    const n = lastConvert.files.length;
+    lede.textContent =
+      `${n} file${n === 1 ? "" : "s"} written from your Generate plan. ` +
+      "Select all.nc for mill order, or a process file for its G-code.";
+  }
+  void inspectNc(lastConvert.selected);
+}
+
+function goConvert() {
+  if (!jobId) {
+    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    return;
+  }
+  if (!lastConvert) {
+    setStatus("Press Next step · Convert on Generate to write the .nc files", "error");
+    return;
+  }
+  showPanel("convert");
+  setStage(4);
+  void inspectNc(lastConvert.selected);
+  setStatus("Stage 4 · Inspect or download converted .nc files", "ok");
+  requestAnimationFrame(() => {
+    board.resize();
+    board.draw();
+  });
+}
+
 async function runGenerate() {
   if (!jobId) return;
   try {
     await refreshGenerateForm();
     showPanel("generate");
-    setStage(3);
-    setStatus("Stage 3 · Generating CNC G-code…");
-    busy = true;
-    updateNextButton();
     const settings = readSettings(settingsForm);
     settings.tool_number = getSelectedToolNumber(settings.tool_number || 2);
     const plan = readGeneratePlan(panelGenerateWrap);
+    if (!planHasWork(plan)) {
+      setStatus("Choose at least one process (copper, drill, or outline).", "error");
+      setStage(3);
+      return;
+    }
+    setStatus("Stage 4 · Writing CNC G-code…");
+    busy = true;
+    updateNextButton();
+    setProgress(true, 25, "Writing CNC G-code…", "25%");
     const result = await generateJob(jobId, settings, plan);
-    renderDownloads(downloadsEl, jobId, result.files);
-    showToolpathPreview(toolpathImg, result.toolpath_preview_png_base64);
-    setStatus(`Stage 4 Convert ready · ${result.message}`, "ok");
+    setProgress(true, 90, "Building toolpath overlay…", "90%");
+    applyConvertResult(result);
+    showPanel("convert");
     setStage(4);
+    setStatus(`Stage 4 Convert ready · ${result.message}`, "ok");
+    setTimeout(() => setProgress(false), 400);
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
     setStage(3);
     showPanel("generate");
+    setProgress(false);
   } finally {
     busy = false;
     updateNextButton();
@@ -397,6 +568,16 @@ async function runGenerate() {
 
 async function nextStep() {
   if (!jobId || busy) return;
+  if (panelGenerateWrap && !panelGenerateWrap.hidden) {
+    await runGenerate();
+    return;
+  }
+  if (panelConvertWrap && !panelConvertWrap.hidden) {
+    const link =
+      downloadsEl.querySelector('a[download="all.nc"]') || downloadsEl.querySelector("a");
+    link?.click();
+    return;
+  }
   if (currentStage <= 1) {
     goMachine();
     setStatus("Stage 2 · Board setting, then press Next step", "ok");
@@ -405,10 +586,6 @@ async function nextStep() {
   if (currentStage === 2) {
     goGenerate();
     setStatus("Stage 3 · Choose layers and tools, then press Next step to generate", "ok");
-    return;
-  }
-  if (currentStage === 3) {
-    await runGenerate();
   }
 }
 
@@ -430,20 +607,21 @@ pills[3].addEventListener("click", () => {
   if (!jobId) return;
   goGenerate();
 });
-pills[4].addEventListener("click", () => {
-  if (!jobId) return;
-  if (currentStage >= 4) {
-    showPanel("generate");
-    setStage(4);
-    setStatus("Stage 4 · Download converted .nc files below", "ok");
-  } else {
-    setStatus("Run Stage 3 Generate first", "error");
-  }
+pills[4].addEventListener("click", goConvert);
+
+document.getElementById("inspect-mode")?.addEventListener("change", (event) => {
+  const value = event.target?.value;
+  if (value !== "jobs" && value !== "gcode") return;
+  inspectMode = value;
+  applyInspectView();
 });
 
 document.getElementById("btn-fit").addEventListener("click", () => board.fit());
 document.getElementById("btn-zoom-in").addEventListener("click", () => board.zoom(1.2));
 document.getElementById("btn-zoom-out").addEventListener("click", () => board.zoom(1 / 1.2));
+document.getElementById("hide-rapids")?.addEventListener("change", (event) => {
+  board.setShowRapids(!event.target.checked);
+});
 
 btnNext.addEventListener("click", nextStep);
 btnReset.addEventListener("click", doReset);

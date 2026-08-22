@@ -97,6 +97,7 @@ export class BoardPreview {
     this.bounds = null;
     this.visibility = {};
     this.toolpaths = [];
+    this.showRapids = false;
     this.scale = 1;
     this.offsetX = 0;
     this.offsetY = 0;
@@ -203,6 +204,7 @@ export class BoardPreview {
     this.scale = 1;
     this.offsetX = 0;
     this.offsetY = 0;
+    this._syncRapidToggle();
     this.draw();
   }
 
@@ -213,7 +215,22 @@ export class BoardPreview {
 
   setToolpaths(paths) {
     this.toolpaths = Array.isArray(paths) ? paths : [];
+    this._syncRapidToggle();
     this.draw();
+  }
+
+  setShowRapids(on) {
+    this.showRapids = !!on;
+    this.draw();
+  }
+
+  _syncRapidToggle() {
+    const wrap = document.getElementById("rapid-toggle-wrap");
+    if (!wrap) return;
+    const onPathStage =
+      document.body.classList.contains("view-generate") ||
+      document.body.classList.contains("view-convert");
+    wrap.hidden = !onPathStage || !this.toolpaths.length;
   }
 
   setGroupVisible(names, visible) {
@@ -481,7 +498,29 @@ export class BoardPreview {
 
   _drawToolpaths(ctx) {
     if (!this.toolpaths.length) return;
+    if (this.showRapids) {
+      for (const path of this.toolpaths) {
+        if (path.kind !== "rapid") continue;
+        const pts = path.points || [];
+        if (pts.length < 2) continue;
+        ctx.beginPath();
+        const first = this.worldToScreen(pts[0][0], pts[0][1]);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < pts.length; i++) {
+          const p = this.worldToScreen(pts[i][0], pts[i][1]);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.55)";
+        ctx.lineWidth = 1.25;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
     for (const path of this.toolpaths) {
+      if (path.kind === "rapid") continue;
       const pts = path.points || [];
       const color = this._pathColor(path.file, path.kind, path.tool_number);
       if (path.kind === "drill") {

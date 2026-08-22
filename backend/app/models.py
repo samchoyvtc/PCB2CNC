@@ -141,6 +141,7 @@ class GenerateResponse(BaseModel):
     job_id: str
     files: list[str]
     toolpath_preview_png_base64: Optional[str] = None
+    paths: list[dict[str, Any]] = Field(default_factory=list)
     message: str
 
 

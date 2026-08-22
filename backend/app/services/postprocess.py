@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 from app.models import MachineSettings
@@ -63,12 +64,12 @@ def write_path_nc(
         if len(contour) < 2:
             continue
         x0, y0 = contour[0]
-        lines.append(f"G0 X{x0:.4f} Y{y0:.4f}")
         lines.append(f"G0 Z{_retract_z(settings):.3f}")
 
         depth = 0.0
         while depth < depth_mm - 1e-9:
             depth = min(depth_mm, depth + step)
+            lines.append(f"G0 X{x0:.4f} Y{y0:.4f}")
             lines.append(f"G1 Z{-depth:.4f} F{settings.plunge_mm_min:.1f}")
             for x, y in contour[1:]:
                 lines.append(f"G1 X{x:.4f} Y{y:.4f} F{settings.feed_mm_min:.1f}")
@@ -211,6 +212,145 @@ def write_drill_nc_grouped(
     path.write_text("\n".join(lines) + "\n")
 
 
+_HOLE_COMMENT = re.compile(
+    r"^;\s*T(\d+)\s+holes\s+[Øø]\s*([\d.]+)\s*mm\s+(\w+)\s*\((\d+)\)",
+    re.I,
+)
+_TOOL_CHANGE = re.compile(r"^T(\d+)\s*M6\b", re.I)
+_SKIP_TITLE = re.compile(
+    r"^(material:|board:|drill depth:|clearance height:|retract height:"
+    r"|combined |merged |coolant)",
+    re.I,
+)
+
+
+def _job_from_part(file_name: str, title: str, hole: dict | None) -> tuple[str, str]:
+    name = (file_name or "").lower()
+    heading = (title or "").strip()
+    if name.startswith("isolation") or "engrav" in heading.lower():
+        job = "Copper engraving"
+        detail = "Pocket" if "pocket" in heading.lower() else "Isolation"
+    elif name.startswith("drill") or hole or "drill" in heading.lower():
+        job = "Drilling"
+        if hole:
+            count = int(hole["count"])
+            holes = "hole" if count == 1 else "holes"
+            detail = f"Ø {hole['diameter']} mm · {hole['mode']} · {count} {holes}"
+        else:
+            detail = "Holes"
+    elif name.startswith("outline") or "outline" in heading.lower():
+        job = "Board outline"
+        detail = "Outside cut"
+    else:
+        job = heading or file_name or "Job"
+        detail = ""
+    return job, detail
+
+
+def nc_job_sequence(text: str, file_name: str = "") -> list[dict]:
+    """Read mill order from G-code comments and T…M6 tool changes."""
+    rows: list[dict] = []
+    current_file = file_name
+    title = ""
+    hole: dict | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        begin = re.match(r"^;\s*Begin\s+(\S+)", line, re.I)
+        if begin:
+            current_file = begin.group(1)
+            title = ""
+            hole = None
+            continue
+        if re.match(r"^;\s*End\s+", line, re.I):
+            current_file = file_name
+            title = ""
+            hole = None
+            continue
+        hole_match = _HOLE_COMMENT.match(line)
+        if hole_match:
+            hole = {
+                "tool": int(hole_match.group(1)),
+                "diameter": hole_match.group(2),
+                "mode": hole_match.group(3).lower(),
+                "count": int(hole_match.group(4)),
+            }
+            continue
+        if line.startswith(";"):
+            inner = re.sub(r"^;\s*", "", line)
+            inner = re.sub(r"^---\s*", "", inner)
+            inner = re.sub(r"\s*---$", "", inner).strip()
+            if inner and not _SKIP_TITLE.match(inner) and not inner.startswith("SEQ "):
+                title = inner
+            continue
+        tool_match = _TOOL_CHANGE.match(line)
+        if not tool_match:
+            continue
+        tool = int(tool_match.group(1))
+        job, detail = _job_from_part(current_file, title, hole)
+        rows.append(
+            {
+                "step": len(rows) + 1,
+                "job": job,
+                "detail": detail,
+                "tool": tool,
+                "file": current_file,
+            }
+        )
+        hole = None
+    return rows
+
+
+def with_tool_change_jobs(rows: list[dict]) -> list[dict]:
+    """Insert a wait step before the first tool and whenever T-word changes."""
+    out: list[dict] = []
+    previous: int | None = None
+    for row in rows:
+        if row.get("job") == "Tool change":
+            out.append(dict(row))
+            previous = int(row["tool"])
+            continue
+        tool = int(row["tool"])
+        if previous is None:
+            out.append(
+                {
+                    "job": "Tool change",
+                    "detail": f"Load T{tool}",
+                    "tool": tool,
+                    "file": "",
+                }
+            )
+        elif tool != previous:
+            out.append(
+                {
+                    "job": "Tool change",
+                    "detail": f"T{previous} → T{tool}",
+                    "tool": tool,
+                    "file": "",
+                }
+            )
+        out.append(dict(row))
+        previous = tool
+    for index, item in enumerate(out, start=1):
+        item["step"] = index
+    return out
+
+
+def _sequence_comments(parts: list[Path]) -> list[str]:
+    rows: list[dict] = []
+    for part in parts:
+        if not part.exists():
+            continue
+        rows.extend(nc_job_sequence(part.read_text(errors="replace"), part.name))
+    rows = with_tool_change_jobs(rows)
+    if not rows:
+        return []
+    lines = ["; Job sequence"]
+    for index, row in enumerate(rows, start=1):
+        detail = f" | {row['detail']}" if row["detail"] else ""
+        lines.append(f"; SEQ {index} | {row['job']}{detail} | T{row['tool']}")
+    return lines
+
+
 def merge_nc_files(
     parts: list[Path],
     dest: Path,
@@ -219,6 +359,7 @@ def merge_nc_files(
 ) -> None:
     lines = _header(settings, "Merged PCB Job")
     lines.append("; Combined isolation / drill / outline")
+    lines.extend(_sequence_comments(parts))
     for part in parts:
         if not part.exists():
             continue

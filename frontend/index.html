@@ -163,12 +163,27 @@
       align-items: start;
       overflow: visible;
       min-height: calc(100vh - 8.75rem);
+      height: auto;
+    }
+    body.view-convert {
+      height: 100vh;
+      overflow: hidden;
+      grid-template-rows: auto auto 1fr;
+    }
+    body.view-convert main {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 2fr);
+      align-items: stretch;
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
     }
     body.view-machine #panel-input,
     body.view-machine #panel-preview,
     body.view-machine #panel-layers,
     body.view-generate #panel-input,
-    body.view-generate #panel-layers {
+    body.view-generate #panel-layers,
+    body.view-convert #panel-input,
+    body.view-convert #panel-layers {
       display: none !important;
     }
     body.view-generate #panel-preview {
@@ -178,6 +193,13 @@
       align-self: start;
       height: calc(100vh - 8.75rem);
       max-height: calc(100vh - 8.75rem);
+      min-height: 0;
+    }
+    body.view-convert #panel-preview {
+      display: flex !important;
+      position: static;
+      height: 100%;
+      max-height: none;
       min-height: 0;
     }
     body.view-machine #panel-machine-wrap {
@@ -195,14 +217,61 @@
       max-height: none;
       overflow: visible;
     }
+    body.view-convert #panel-jobs-wrap,
+    body.view-convert #panel-convert-wrap {
+      display: flex;
+      flex-direction: column;
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      height: 100%;
+      max-height: none;
+      min-height: 0;
+      overflow: hidden;
+    }
+    body.view-convert #panel-jobs,
+    body.view-convert #panel-convert {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    body.view-convert #panel-jobs > .jobs-head,
+    body.view-convert #panel-convert > h2,
+    body.view-convert #panel-convert > .gen-lede {
+      flex: 0 0 auto;
+    }
+    #panel-generate-wrap[hidden],
+    #panel-jobs-wrap[hidden],
+    #panel-convert-wrap[hidden] {
+      display: none !important;
+    }
     body.view-machine #panel-machine {
       display: block !important;
     }
     body.view-preview #panel-machine-wrap {
       /* keep right column for layers */
     }
-    @media (max-width: 1100px) {
+    @media (max-width: 1200px) {
       main { grid-template-columns: 1fr; }
+      body.view-convert {
+        height: auto;
+        overflow: auto;
+      }
+      body.view-convert main {
+        grid-template-columns: 1fr;
+        height: auto;
+        overflow: visible;
+      }
+      body.view-convert #panel-preview {
+        height: min(70vh, 36rem);
+      }
+      body.view-convert #panel-jobs-wrap,
+      body.view-convert #panel-convert-wrap {
+        height: auto;
+        overflow: visible;
+      }
     }
     .tools-toolbar {
       display: flex;
@@ -331,9 +400,6 @@
     }
     @media (max-width: 800px) {
       .machine-grid { grid-template-columns: 1fr; }
-    }
-    #convert-section[hidden] {
-      display: none !important;
     }
     .panel {
       background: var(--panel);
@@ -476,6 +542,58 @@
       gap: 0.5rem;
       flex-wrap: wrap;
       align-items: center;
+    }
+    .rapid-switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 650;
+      user-select: none;
+      cursor: pointer;
+    }
+    .rapid-switch[hidden],
+    body:not(.view-generate):not(.view-convert) .rapid-switch {
+      display: none;
+    }
+    .rapid-switch input {
+      appearance: none;
+      width: 2.15rem;
+      height: 1.2rem;
+      margin: 0;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--bg0);
+      position: relative;
+      cursor: pointer;
+      flex: 0 0 auto;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .rapid-switch input::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 2px;
+      width: 0.82rem;
+      height: 0.82rem;
+      border-radius: 50%;
+      background: #93a0b8;
+      transform: translateY(-50%);
+      transition: left 0.15s, background 0.15s;
+    }
+    .rapid-switch input:checked {
+      background: #163056;
+      border-color: rgba(56, 189, 248, 0.55);
+    }
+    .rapid-switch input:checked::after {
+      left: calc(100% - 0.82rem - 2px);
+      background: #38bdf8;
+    }
+    .rapid-switch input:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
     }
     button, .btn {
       appearance: none;
@@ -982,24 +1100,190 @@
     }
     #downloads {
       list-style: none;
-      margin: 0.75rem 0 0;
+      margin: 0;
       padding: 0;
+      display: grid;
+      gap: 0.55rem;
+      flex: 0 0 auto;
+    }
+    #downloads li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.75rem 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(7, 11, 20, 0.45);
+      cursor: pointer;
+    }
+    #downloads li:hover {
+      border-color: rgba(245, 166, 35, 0.32);
+    }
+    #downloads li.is-selected {
+      border-color: rgba(245, 166, 35, 0.55);
+      background: rgba(245, 166, 35, 0.08);
+    }
+    #downloads .file-copy {
+      min-width: 0;
+    }
+    #downloads .file-name {
+      display: block;
+      color: var(--text);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.82rem;
+      font-weight: 650;
+    }
+    #downloads .file-meta {
+      display: block;
+      margin-top: 0.15rem;
+      color: var(--muted);
+      font-size: 0.75rem;
     }
     #downloads a {
-      color: var(--accent2);
+      flex: 0 0 auto;
+      color: #1a1205;
+      background: linear-gradient(180deg, #ffb84a, var(--accent));
       text-decoration: none;
+      font-size: 0.78rem;
+      font-weight: 650;
+      border-radius: 8px;
+      padding: 0.38rem 0.7rem;
+    }
+    #downloads a:hover {
+      filter: brightness(1.08);
+    }
+    #downloads li.is-selected a {
+      filter: none;
+    }
+    .jobs-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.65rem;
+      margin: 0 0 0.75rem;
+    }
+    .jobs-head h2 {
+      margin: 0;
+    }
+    .jobs-head .gen-seg {
+      flex: 0 0 auto;
+      width: 11.25rem;
+    }
+    .jobs-head .gen-seg-opt {
+      padding: 0.32rem 0.4rem;
+      font-size: 0.72rem;
+    }
+    #gcode-inspect {
+      margin-top: 0;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #070b14;
+      overflow: hidden;
+    }
+    #gcode-inspect[hidden] {
+      display: none !important;
+    }
+    .gcode-inspect-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.55rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+      background: rgba(18, 26, 43, 0.92);
+    }
+    #gcode-inspect-name {
       font-family: "JetBrains Mono", monospace;
+      font-size: 0.78rem;
+      font-weight: 650;
+    }
+    #gcode-inspect-meta {
+      color: var(--muted);
+      font-size: 0.72rem;
+    }
+    #gcode-inspect-body {
+      margin: 0;
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 0.75rem 0.9rem 1rem;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.72rem;
+      line-height: 1.5;
+      color: #d7e0ef;
+      white-space: pre;
+      tab-size: 4;
+    }
+    #gcode-inspect-body[hidden] {
+      display: none !important;
+    }
+    #gcode-sequence {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+    }
+    #gcode-sequence[hidden] {
+      display: none !important;
+    }
+    .job-seq-table {
+      width: 100%;
+      border-collapse: collapse;
       font-size: 0.8rem;
     }
-    #toolpath-preview {
-      width: 100%;
-      border-radius: 10px;
-      border: 1px solid var(--line);
-      background: #070b14;
-      margin-top: 0.75rem;
-      display: none;
+    .job-seq-table th,
+    .job-seq-table td {
+      padding: 0.55rem 0.7rem;
+      border-bottom: 1px solid rgba(42, 54, 80, 0.85);
+      text-align: left;
+      vertical-align: top;
     }
-    #toolpath-preview.visible { display: block; }
+    .job-seq-table th {
+      position: sticky;
+      top: 0;
+      color: var(--muted);
+      font-weight: 650;
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: rgba(15, 23, 42, 0.96);
+    }
+    .job-seq-table td.seq {
+      width: 2.1rem;
+      color: var(--muted);
+      font-family: "JetBrains Mono", monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    .job-seq-table td.job .job-name,
+    .job-seq-table td.tool .tool-num {
+      display: block;
+      font-weight: 650;
+    }
+    .job-seq-table td.tool .tool-num {
+      font-family: "JetBrains Mono", monospace;
+    }
+    .job-seq-table td.job .job-detail,
+    .job-seq-table td.tool .tool-name {
+      display: block;
+      margin-top: 0.15rem;
+      color: var(--muted);
+      font-size: 0.72rem;
+    }
+    .job-seq-table .tool-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .job-seq-table tbody tr:not(.is-wait) td {
+      background: #163056;
+    }
+    .job-seq-table tr.is-wait td.job .job-name {
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -1049,6 +1333,10 @@
         <button type="button" id="btn-fit">Fit</button>
         <button type="button" id="btn-zoom-in">Zoom +</button>
         <button type="button" id="btn-zoom-out">Zoom −</button>
+        <label class="rapid-switch" id="rapid-toggle-wrap" hidden>
+          Hide rapids
+          <input type="checkbox" id="hide-rapids" role="switch" checked />
+        </label>
       </div>
       <div id="canvas-host">
         <canvas id="board-canvas"></canvas>
@@ -1217,16 +1505,55 @@
             </div>
           </div>
         </section>
+      </div>
+    </aside>
 
-        <div id="convert-section" hidden>
-          <h2 style="margin-top:0.35rem">4 · Convert output</h2>
-          <ul id="downloads"></ul>
-          <img id="toolpath-preview" alt="Toolpath verification preview" />
+    <aside class="panel" id="panel-jobs-wrap" hidden>
+      <div id="panel-jobs">
+        <div class="jobs-head">
+          <h2 id="jobs-heading">Inspect</h2>
+          <div class="gen-seg" id="inspect-mode" role="radiogroup" aria-label="Inspect view">
+            <label class="gen-seg-opt">
+              <input type="radio" name="inspect-mode" value="jobs" checked />
+              Job list
+            </label>
+            <label class="gen-seg-opt">
+              <input type="radio" name="inspect-mode" value="gcode" />
+              G-code
+            </label>
+          </div>
         </div>
+        <section id="gcode-inspect" hidden>
+          <div class="gcode-inspect-head">
+            <span id="gcode-inspect-name"></span>
+            <span id="gcode-inspect-meta"></span>
+          </div>
+          <div id="gcode-sequence" hidden>
+            <table class="job-seq-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Job</th>
+                  <th>Tool</th>
+                </tr>
+              </thead>
+              <tbody id="gcode-sequence-body"></tbody>
+            </table>
+          </div>
+          <pre id="gcode-inspect-body" tabindex="0"></pre>
+        </section>
+      </div>
+    </aside>
+
+    <aside class="panel" id="panel-convert-wrap" hidden>
+      <div id="panel-convert">
+        <h2>Convert G-code</h2>
+        <p class="gen-lede" id="convert-lede">G-code is ready for the mill. Select a file to inspect it, or download it.</p>
+        <ul id="downloads" role="listbox" aria-label="Converted G-code files"></ul>
       </div>
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js?v=tab-slider-1"></script>
+  <script type="module" src="/src/app.js?v=rapids-3"></script>
 </body>
 </html>

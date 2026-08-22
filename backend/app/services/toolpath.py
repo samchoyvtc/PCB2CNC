@@ -282,6 +282,26 @@ def _run_pcb2gcode(
     return result
 
 
+def _pixel_to_mm(
+    px: float,
+    py: float,
+    bounds: parser.GerberBounds,
+    dpmm: int,
+    pad_px: int = 0,
+) -> tuple[float, float]:
+    return (
+        bounds.min_x + (px - pad_px) / dpmm,
+        bounds.max_y - (py - pad_px) / dpmm,
+    )
+
+
+def _simplify_contour(cnt: np.ndarray, dpmm: int) -> np.ndarray:
+    """Keep copper-following curves; do not stride down to a fixed point cap."""
+    epsilon = max(0.6, 0.015 * dpmm)
+    approx = cv2.approxPolyDP(cnt, epsilon, True)
+    return approx if len(approx) >= 3 else cnt
+
+
 def _mask_to_paths(
     binary: np.ndarray,
     bounds: parser.GerberBounds,
@@ -289,24 +309,44 @@ def _mask_to_paths(
     *,
     retrieve: int = cv2.RETR_LIST,
     pad_px: int = 0,
+    outers_only: bool = False,
 ) -> list[list[tuple[float, float]]]:
-    contours, _ = cv2.findContours(binary, retrieve, cv2.CHAIN_APPROX_SIMPLE)
+    mode = cv2.RETR_CCOMP if outers_only else retrieve
+    contours, hierarchy = cv2.findContours(
+        binary.copy(), mode, cv2.CHAIN_APPROX_SIMPLE
+    )
     paths: list[list[tuple[float, float]]] = []
-    min_area = (dpmm * 0.2) ** 2
-    for cnt in contours:
+    min_area = (dpmm * 0.15) ** 2
+    parents = hierarchy[0] if hierarchy is not None else None
+    for index, cnt in enumerate(contours):
+        parent = int(parents[index][3]) if parents is not None else -1
+        if outers_only and parent != -1:
+            continue
         if cv2.contourArea(cnt) < min_area:
             continue
-        pts: list[tuple[float, float]] = []
-        for p in cnt[:: max(1, len(cnt) // 400)]:
-            px, py = float(p[0][0]), float(p[0][1])
-            x_mm = bounds.min_x + (px - pad_px) / dpmm
-            y_mm = bounds.max_y - (py - pad_px) / dpmm
-            pts.append((x_mm, y_mm))
+        approx = _simplify_contour(cnt, dpmm)
+        pts = [
+            _pixel_to_mm(float(p[0][0]), float(p[0][1]), bounds, dpmm, pad_px)
+            for p in approx
+        ]
         if len(pts) >= 3:
             if pts[0] != pts[-1]:
                 pts.append(pts[0])
             paths.append(pts)
     return paths
+
+
+def _expand_mask(binary: np.ndarray, offset_px: int) -> tuple[np.ndarray, int]:
+    """Grow copper by offset_px using Euclidean distance (tool-center keep-out)."""
+    pad = max(int(offset_px), 0) + 2
+    padded = cv2.copyMakeBorder(
+        binary, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0
+    )
+    if offset_px <= 0:
+        return padded, pad
+    dist = cv2.distanceTransform(cv2.bitwise_not(padded), cv2.DIST_L2, 5)
+    expanded = np.where(dist <= float(offset_px), 255, 0).astype(np.uint8)
+    return expanded, pad
 
 
 def _contours_from_gerber(
@@ -323,12 +363,17 @@ def _contours_from_gerber(
     img = Image.open(BytesIO(png)).convert("L")
     arr = np.array(img)
     _, binary = cv2.threshold(arr, 10, 255, cv2.THRESH_BINARY)
-    if offset_px > 0:
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (offset_px * 2 + 1, offset_px * 2 + 1)
-        )
-        binary = cv2.dilate(binary, kernel, iterations=1)
-    return _mask_to_paths(binary, bounds, dpmm), bounds
+    expanded, pad = _expand_mask(binary, offset_px)
+    return (
+        _mask_to_paths(
+            expanded,
+            bounds,
+            dpmm,
+            outers_only=True,
+            pad_px=pad,
+        ),
+        bounds,
+    )
 
 
 def _cutter_radius_mm(tool_number: int) -> float:
@@ -409,20 +454,33 @@ def _isolation_paths(
     *,
     dpmm: int = 50,
 ) -> tuple[list[list[tuple[float, float]]], parser.GerberBounds]:
+    """Tool-center contours around each copper island."""
     bounds = parser.parse_gerber_bounds(path)
     png = parser.render_gerber_png(path, rgba=(255, 255, 255, 255), dpmm=dpmm)
     img = Image.open(BytesIO(png)).convert("L")
     arr = np.array(img)
     _, binary0 = cv2.threshold(arr, 10, 255, cv2.THRESH_BINARY)
+    pad = max(max(offsets_px, default=0), 0) + 2
+    padded = cv2.copyMakeBorder(
+        binary0, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0
+    )
+    dist = cv2.distanceTransform(cv2.bitwise_not(padded), cv2.DIST_L2, 5)
     paths: list[list[tuple[float, float]]] = []
     for offset_px in offsets_px:
-        binary = binary0
-        if offset_px > 0:
-            kernel = cv2.getStructuringElement(
-                cv2.MORPH_ELLIPSE, (offset_px * 2 + 1, offset_px * 2 + 1)
+        expanded = (
+            padded
+            if offset_px <= 0
+            else np.where(dist <= float(offset_px), 255, 0).astype(np.uint8)
+        )
+        paths.extend(
+            _mask_to_paths(
+                expanded,
+                bounds,
+                dpmm,
+                outers_only=True,
+                pad_px=pad,
             )
-            binary = cv2.dilate(binary0, kernel, iterations=1)
-        paths.extend(_mask_to_paths(binary, bounds, dpmm))
+        )
     return paths, bounds
 
 
@@ -529,7 +587,9 @@ def _pocket_paths(
         cv2.MORPH_ELLIPSE, (step_px * 2 + 1, step_px * 2 + 1)
     )
     keep = cv2.dilate(copper, radius_k, iterations=1)
-    clear = cv2.bitwise_and(cv2.erode(board, radius_k, iterations=1), cv2.bitwise_not(keep))
+    clear = cv2.bitwise_and(
+        cv2.erode(board, radius_k, iterations=1), cv2.bitwise_not(keep)
+    )
     work = clear
     paths: list[list[tuple[float, float]]] = []
     min_pixels = max(4, int((dpmm * 0.15) ** 2))
@@ -805,6 +865,7 @@ def generate_toolpaths(
         "files": produced,
         "engine": engine,
         "toolpath_preview_png_base64": preview_b64,
+        "paths": extract_preview_paths(out_dir),
     }
 
 
@@ -989,62 +1050,87 @@ def extract_preview_paths(out_dir: Path) -> list[dict[str, Any]]:
                         "points": poly,
                     }
                 )
+            for kind, poly in parse_gcode_polylines(text):
+                if kind != "rapid" or len(poly) < 2:
+                    continue
+                out.append(
+                    {
+                        "file": path.name,
+                        "kind": "rapid",
+                        "points": [[float(x), float(y)] for x, y in poly],
+                    }
+                )
             continue
-        for poly in parse_gcode_paths(text):
+        for kind, poly in parse_gcode_polylines(text):
             if len(poly) < 2:
                 continue
             out.append(
                 {
                     "file": path.name,
-                    "kind": "cut",
+                    "kind": kind,
                     "points": [[float(x), float(y)] for x, y in poly],
                 }
             )
     return out
 
 
-def parse_gcode_paths(nc_text: str) -> list[list[tuple[float, float]]]:
-    """Extract rapid/feed XY polylines from G-code for plotting."""
+def _is_rapid(s: str) -> bool:
+    return bool(re.match(r"^G00?(?!\d)", s))
 
-    paths: list[list[tuple[float, float]]] = []
+
+def _is_feed(s: str) -> bool:
+    return bool(re.match(r"^G0?1(?!\d)", s))
+
+
+def parse_gcode_polylines(nc_text: str) -> list[tuple[str, list[tuple[float, float]]]]:
+    """Split G-code into cut (G1) and rapid (G0) XY polylines."""
+    out: list[tuple[str, list[tuple[float, float]]]] = []
     current: list[tuple[float, float]] = []
+    current_kind = ""
+    modal = "G0"
     x = y = 0.0
+    have_pos = False
+
+    def flush() -> None:
+        nonlocal current, current_kind
+        if current_kind and len(current) >= 2:
+            out.append((current_kind, current))
+        current = []
+        current_kind = ""
+
     for line in nc_text.splitlines():
         s = line.strip().upper()
-        if not s or s.startswith("(") or s.startswith(";"):
+        if not s or s.startswith("(") or s.startswith(";") or s.startswith("%"):
             continue
-        if s.startswith("G0") or s.startswith("G00"):
-            if len(current) >= 2:
-                paths.append(current)
-            current = []
-            mx = re.search(r"X([+-]?\d*\.?\d+)", s)
-            my = re.search(r"Y([+-]?\d*\.?\d+)", s)
-            if mx:
-                x = float(mx.group(1))
-            if my:
-                y = float(my.group(1))
-            current = [(x, y)]
+        if _is_rapid(s):
+            modal = "G0"
+        elif _is_feed(s):
+            modal = "G1"
+        mx = re.search(r"X([+-]?\d*\.?\d+)", s)
+        my = re.search(r"Y([+-]?\d*\.?\d+)", s)
+        if not mx and not my:
             continue
-        if s.startswith("G1") or s.startswith("G01") or "X" in s or "Y" in s:
-            if not (s.startswith("G1") or s.startswith("G01") or s.startswith("G0")):
-                # bare coordinate words on continuation — treat as feed if we have current
-                if not current:
-                    continue
-            mx = re.search(r"X([+-]?\d*\.?\d+)", s)
-            my = re.search(r"Y([+-]?\d*\.?\d+)", s)
-            if not mx and not my:
-                continue
-            if mx:
-                x = float(mx.group(1))
-            if my:
-                y = float(my.group(1))
-            if not current:
+        nx, ny = x, y
+        if mx:
+            nx = float(mx.group(1))
+        if my:
+            ny = float(my.group(1))
+        kind = "rapid" if modal == "G0" else "cut"
+        if have_pos and (nx != x or ny != y):
+            if kind != current_kind:
+                flush()
                 current = [(x, y)]
-            else:
-                current.append((x, y))
-    if len(current) >= 2:
-        paths.append(current)
-    return paths
+                current_kind = kind
+            current.append((nx, ny))
+        x, y = nx, ny
+        have_pos = True
+    flush()
+    return out
+
+
+def parse_gcode_paths(nc_text: str) -> list[list[tuple[float, float]]]:
+    """Extract feed XY polylines from G-code for plotting."""
+    return [pts for kind, pts in parse_gcode_polylines(nc_text) if kind == "cut"]
 
 
 def render_toolpath_preview(

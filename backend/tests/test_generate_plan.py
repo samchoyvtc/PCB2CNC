@@ -17,12 +17,110 @@ SIMPLE_ZIP = SAMPLES / "TEST_Gerber_Simple.zip"
 client = TestClient(app)
 
 
+def test_parse_gcode_separates_rapids_from_cuts():
+    from app.services.toolpath import parse_gcode_paths, parse_gcode_polylines
+
+    text = (
+        "G90 G21\n"
+        "G0 X0 Y0\n"
+        "G1 X10 Y0 F2000\n"
+        "G1 X10 Y10\n"
+        "G0 Z15\n"
+        "G0 X20 Y20\n"
+        "G1 X30 Y20\n"
+    )
+    kinds = [kind for kind, pts in parse_gcode_polylines(text)]
+    assert kinds == ["cut", "rapid", "cut"]
+    cuts = parse_gcode_paths(text)
+    assert cuts[0][0] == (0.0, 0.0)
+    assert cuts[0][-1] == (10.0, 10.0)
+    assert cuts[1][0] == (20.0, 20.0)
+    rapids = [pts for kind, pts in parse_gcode_polylines(text) if kind == "rapid"]
+    assert rapids[0][0] == (10.0, 10.0)
+    assert rapids[0][-1] == (20.0, 20.0)
+
+
+def test_nc_job_sequence_reads_tool_changes():
+    from app.services.postprocess import nc_job_sequence
+
+    isolation = nc_job_sequence("; Isolation Engraving\nT2 M6\nM5\n", "isolation.nc")
+    assert isolation == [
+        {
+            "step": 1,
+            "job": "Copper engraving",
+            "detail": "Isolation",
+            "tool": 2,
+            "file": "isolation.nc",
+        }
+    ]
+    drill = nc_job_sequence(
+        "; 2D Drilling\n"
+        "; T3 holes Ø 0.8 mm drill (4)\nT3 M6\n"
+        "; T4 holes Ø 1.0 mm pocket (2)\nT4 M6\n",
+        "drill.nc",
+    )
+    assert [row["tool"] for row in drill] == [3, 4]
+    assert drill[0]["detail"] == "Ø 0.8 mm · drill · 4 holes"
+    assert drill[1]["detail"] == "Ø 1.0 mm · pocket · 2 holes"
+    outline = nc_job_sequence("; Board Outline (outside)\nT4 M6\n", "outline.nc")
+    assert outline[0]["job"] == "Board outline"
+    assert outline[0]["tool"] == 4
+
+
+def test_tool_change_is_its_own_job():
+    from app.services.postprocess import nc_job_sequence, with_tool_change_jobs
+
+    rows = with_tool_change_jobs(
+        [
+            *nc_job_sequence("; Isolation Engraving\nT2 M6\n", "isolation.nc"),
+            *nc_job_sequence(
+                "; T3 holes Ø 0.8 mm drill (4)\nT3 M6\n"
+                "; T4 holes Ø 1.0 mm drill (2)\nT4 M6\n"
+                "; T4 holes Ø 1.1 mm pocket (1)\nT4 M6\n",
+                "drill.nc",
+            ),
+            *nc_job_sequence("; Board Outline (outside)\nT4 M6\n", "outline.nc"),
+        ]
+    )
+    jobs = [(row["job"], row["detail"], row["tool"]) for row in rows]
+    assert jobs[0] == ("Tool change", "Load T2", 2)
+    assert jobs[1][0] == "Copper engraving"
+    assert jobs[2] == ("Tool change", "T2 → T3", 3)
+    assert ("Tool change", "T3 → T4", 4) in jobs
+    assert [row["job"] for row in rows].count("Tool change") == 3
+    assert rows[-1]["job"] == "Board outline"
+    assert rows[-2]["job"] == "Drilling"
+
+
 def test_split_contour_leaves_holding_tabs():
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0)]
     parts = _split_contour_with_tabs(square, tab_count=4, tab_width_mm=2.0)
     assert len(parts) == 4
     for part in parts:
         assert len(part) >= 2
+
+
+def test_step_down_does_not_chord_open_outline(tmp_path):
+    from app.models import MachineSettings
+    from app.services.postprocess import write_path_nc
+    from app.services.toolpath import parse_gcode_paths
+
+    nc = tmp_path / "outline.nc"
+    write_path_nc(
+        nc,
+        [[(0.0, 50.0), (50.0, 50.0), (50.0, 0.0)]],
+        settings=MachineSettings(step_down_mm=0.8),
+        operation="Board Outline (outside)",
+        tool_number=4,
+        depth_mm=1.6,
+        step_down_mm=0.8,
+        close_open_paths=False,
+    )
+    cuts = parse_gcode_paths(nc.read_text())
+    assert len(cuts) >= 2
+    for poly in cuts:
+        for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+            assert x0 == x1 or y0 == y1
 
 
 def test_split_contour_no_tabs_keeps_path():
@@ -103,6 +201,102 @@ def test_isolation_offsets_grow_with_passes():
     assert three[2] > three[1]
 
 
+def test_mask_paths_keep_more_than_400_points_on_large_curve():
+    import cv2
+    import numpy as np
+
+    from app.services import parser
+    from app.services.toolpath import _mask_to_paths
+
+    dpmm = 50
+    copper = np.zeros((160, 2200), dtype=np.uint8)
+    cv2.rectangle(copper, (10, 60), (2190, 100), 255, thickness=-1)
+    for x in range(20, 2180, 4):
+        cv2.rectangle(copper, (x, 50), (x + 1, 110), 255, thickness=-1)
+    bounds = parser.GerberBounds(0.0, 0.0, 2200 / dpmm, 160 / dpmm)
+    paths = _mask_to_paths(copper, bounds, dpmm, retrieve=cv2.RETR_EXTERNAL)
+    assert paths
+    assert max(len(path) for path in paths) > 400
+
+
+def test_offset_isolation_stays_outside_copper():
+    import cv2
+    import numpy as np
+
+    from app.services import parser
+    from app.services.toolpath import _expand_mask, _mask_to_paths
+
+    dpmm = 50
+    size = 400
+    center = (200, 200)
+    radius_px = 40
+    offset_px = 10
+    copper = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(copper, center, radius_px, 255, thickness=-1)
+    expanded, pad = _expand_mask(copper, offset_px)
+    bounds = parser.GerberBounds(0.0, 0.0, size / dpmm, size / dpmm)
+    paths = _mask_to_paths(
+        expanded, bounds, dpmm, retrieve=cv2.RETR_EXTERNAL, pad_px=pad
+    )
+    assert paths
+    for path in paths:
+        for x_mm, y_mm in path:
+            px = x_mm * dpmm
+            py = size - y_mm * dpmm
+            dist = ((px - center[0]) ** 2 + (py - center[1]) ** 2) ** 0.5
+            assert dist >= radius_px - 1.5
+            assert dist <= radius_px + offset_px + 2.5
+
+
+def test_isolation_skips_inner_pad_holes():
+    import cv2
+    import numpy as np
+
+    from app.services import parser
+    from app.services.toolpath import _expand_mask, _mask_to_paths
+
+    dpmm = 50
+    size = 300
+    copper = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(copper, (150, 150), 50, 255, thickness=-1)
+    cv2.circle(copper, (150, 150), 18, 0, thickness=-1)
+    expanded, pad = _expand_mask(copper, 8)
+    bounds = parser.GerberBounds(0.0, 0.0, size / dpmm, size / dpmm)
+    skipped = _mask_to_paths(
+        expanded, bounds, dpmm, outers_only=True, pad_px=pad
+    )
+    listed = _mask_to_paths(
+        expanded, bounds, dpmm, retrieve=cv2.RETR_LIST, pad_px=pad
+    )
+    assert len(skipped) == 1
+    assert len(listed) >= 2
+
+
+def test_isolation_keeps_pads_inside_copper_pour():
+    import cv2
+    import numpy as np
+
+    from app.services import parser
+    from app.services.toolpath import _expand_mask, _mask_to_paths
+
+    dpmm = 50
+    size = 400
+    copper = np.zeros((size, size), dtype=np.uint8)
+    cv2.rectangle(copper, (20, 20), (380, 380), 255, thickness=-1)
+    cv2.circle(copper, (200, 200), 40, 0, thickness=-1)
+    cv2.circle(copper, (200, 200), 18, 255, thickness=-1)
+    expanded, pad = _expand_mask(copper, 6)
+    bounds = parser.GerberBounds(0.0, 0.0, size / dpmm, size / dpmm)
+    isolation = _mask_to_paths(
+        expanded, bounds, dpmm, outers_only=True, pad_px=pad
+    )
+    external = _mask_to_paths(
+        expanded, bounds, dpmm, retrieve=cv2.RETR_EXTERNAL, pad_px=pad
+    )
+    assert len(isolation) >= 2
+    assert len(external) == 1
+
+
 def test_cutter_radius_uses_tool_diameter():
     from app.services.toolpath import _cutter_radius_mm
 
@@ -148,6 +342,18 @@ def test_generate_with_plan_writes_nc():
     assert result.status_code == 200, result.text
     names = result.json()["files"]
     assert {"isolation.nc", "drill.nc", "outline.nc", "all.nc"} <= set(names)
+    assert result.json()["paths"]
+    nc = client.get(f"/api/jobs/{job_id}/nc/all.nc")
+    assert nc.status_code == 200
+    text = nc.text
+    assert "G90" in text
+    assert "G1" in text or "G0" in text
+    assert len(text) > 100
+    assert "; Job sequence" in text
+    assert "; SEQ 1 | Tool change |" in text
+    assert text.find("; Begin isolation.nc") < text.find("; Begin drill.nc") < text.find(
+        "; Begin outline.nc"
+    )
 
 
 @pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")

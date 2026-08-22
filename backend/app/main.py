@@ -140,6 +140,7 @@ def generate(job_id: str, body: GenerateRequest | None = None) -> GenerateRespon
         job_id=job_id,
         files=result["files"],
         toolpath_preview_png_base64=result.get("toolpath_preview_png_base64"),
+        paths=result.get("paths") or [],
         message=f"Generated with {result['engine']}: {', '.join(result['files'])}",
     )
 
