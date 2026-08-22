@@ -15,6 +15,7 @@ from app.models import (
     GenerateRequest,
     GenerateResponse,
     MachineToolsResponse,
+    PathPreviewResponse,
     PreviewProgressResponse,
     PreviewResponse,
     ToolpathPreviewResponse,
@@ -126,7 +127,7 @@ def preview_progress(job_id: str) -> PreviewProgressResponse:
 def generate(job_id: str, body: GenerateRequest | None = None) -> GenerateResponse:
     body = body or GenerateRequest()
     try:
-        result = toolpath.generate_toolpaths(job_id, body.settings)
+        result = toolpath.generate_toolpaths(job_id, body.settings, body.plan)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -140,6 +141,27 @@ def generate(job_id: str, body: GenerateRequest | None = None) -> GenerateRespon
         files=result["files"],
         toolpath_preview_png_base64=result.get("toolpath_preview_png_base64"),
         message=f"Generated with {result['engine']}: {', '.join(result['files'])}",
+    )
+
+
+@app.post("/api/jobs/{job_id}/preview-path", response_model=PathPreviewResponse)
+def preview_path(job_id: str, body: GenerateRequest | None = None) -> PathPreviewResponse:
+    body = body or GenerateRequest()
+    try:
+        result = toolpath.preview_operation(job_id, body.settings, body.plan)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Path preview failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return PathPreviewResponse(
+        job_id=job_id,
+        image_png_base64=result["image_png_base64"],
+        files=result["files"],
+        paths=result.get("paths") or [],
+        message=f"Preview: {', '.join(result['files'])}",
     )
 
 

@@ -11,6 +11,8 @@ class MachineSettings(BaseModel):
     """Minimal Stage 3 machine / tool settings (Plan.md defaults)."""
 
     tool_number: int = 2
+    board_width_mm: float = Field(100.0, gt=0, le=1000)
+    board_length_mm: float = Field(150.0, gt=0, le=1000)
     engraving_depth_mm: float = Field(0.15, gt=0, le=5)
     drill_depth_mm: float = Field(1.6, gt=0, le=20)
     spindle_rpm: int = Field(12000, ge=1000, le=60000)
@@ -19,6 +21,7 @@ class MachineSettings(BaseModel):
     step_over_percent: float = Field(50.0, gt=0, le=100)
     step_down_mm: float = Field(0.1, gt=0, le=5)
     safe_z_mm: float = Field(15.0, ge=1, le=100)
+    retract_z_mm: float = Field(3.0, gt=0, le=100)
     coolant: bool = True
 
 
@@ -93,8 +96,37 @@ class UploadResponse(BaseModel):
     message: str
 
 
+class CopperOp(BaseModel):
+    layer: str
+    tool_number: int = 2
+
+
+class DrillSizeMap(BaseModel):
+    diameter_mm: float = Field(gt=0)
+    tool_number: int = 4
+
+
+class DrillOp(BaseModel):
+    layers: list[str] = Field(default_factory=list)
+    size_map: list[DrillSizeMap] = Field(default_factory=list)
+
+
+class OutlineOp(BaseModel):
+    layer: str
+    tool_number: int = 4
+    tab_count: int = Field(4, ge=0, le=32)
+    tab_width_mm: float = Field(2.0, gt=0, le=20)
+
+
+class GeneratePlan(BaseModel):
+    copper: Optional[CopperOp] = None
+    drills: list[DrillOp] = Field(default_factory=list)
+    outline: Optional[OutlineOp] = None
+
+
 class GenerateRequest(BaseModel):
     settings: MachineSettings = Field(default_factory=MachineSettings)
+    plan: Optional[GeneratePlan] = None
 
 
 class GenerateResponse(BaseModel):
@@ -108,6 +140,20 @@ class ToolpathPreviewResponse(BaseModel):
     job_id: str
     image_png_base64: str
     operations: list[str]
+
+
+class ToolpathPoly(BaseModel):
+    file: str
+    kind: str
+    points: list[list[float]] = Field(default_factory=list)
+
+
+class PathPreviewResponse(BaseModel):
+    job_id: str
+    image_png_base64: str
+    files: list[str] = Field(default_factory=list)
+    paths: list[ToolpathPoly] = Field(default_factory=list)
+    message: str = ""
 
 
 class MachineToolsResponse(BaseModel):

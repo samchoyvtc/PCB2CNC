@@ -13,12 +13,18 @@ def _header(settings: MachineSettings, title: str) -> list[str]:
         "%",
         f"; {title}",
         "; Material: PCB",
+        f"; Board: {settings.board_width_mm:g} x {settings.board_length_mm:g} mm",
         f"; Drill depth: {settings.drill_depth_mm} mm",
-        f"; Safe Z: {settings.safe_z_mm} mm",
+        f"; Clearance height: {settings.safe_z_mm} mm",
+        f"; Retract height: {settings.retract_z_mm} mm",
         "G90 G21",
         "G17",
     ]
     return lines
+
+
+def _retract_z(settings: MachineSettings) -> float:
+    return min(settings.retract_z_mm, settings.safe_z_mm)
 
 
 def _coolant(settings: MachineSettings, on: bool) -> str:
@@ -37,6 +43,7 @@ def write_path_nc(
     depth_mm: float,
     include_header: bool = True,
     step_down_mm: float | None = None,
+    close_open_paths: bool = True,
 ) -> None:
     step = step_down_mm or settings.step_down_mm or min(0.1, depth_mm)
     lines: list[str] = []
@@ -55,7 +62,7 @@ def write_path_nc(
             continue
         x0, y0 = contour[0]
         lines.append(f"G0 X{x0:.4f} Y{y0:.4f}")
-        lines.append(f"G0 Z{min(3.0, settings.safe_z_mm):.3f}")
+        lines.append(f"G0 Z{_retract_z(settings):.3f}")
 
         depth = 0.0
         while depth < depth_mm - 1e-9:
@@ -64,11 +71,11 @@ def write_path_nc(
             for x, y in contour[1:]:
                 lines.append(f"G1 X{x:.4f} Y{y:.4f} F{settings.feed_mm_min:.1f}")
             # return to start for multi-pass closed paths
-            if contour[0] != contour[-1]:
+            if close_open_paths and contour[0] != contour[-1]:
                 lines.append(
                     f"G1 X{contour[0][0]:.4f} Y{contour[0][1]:.4f} F{settings.feed_mm_min:.1f}"
                 )
-            lines.append(f"G0 Z{min(1.0, settings.safe_z_mm):.3f}")
+            lines.append(f"G0 Z{_retract_z(settings):.3f}")
 
         lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
 
@@ -102,12 +109,41 @@ def write_drill_nc(
     # peck-ish simple drill cycle
     for hit in hits:
         lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
-        lines.append(f"G0 Z{min(3.0, settings.safe_z_mm):.3f}")
+        lines.append(f"G0 Z{_retract_z(settings):.3f}")
         lines.append(f"G1 Z{-depth_mm:.4f} F{settings.plunge_mm_min:.1f}")
         lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
 
     lines.append(_coolant(settings, False))
     lines.append("M5")
+    lines.append("M2")
+    path.write_text("\n".join(lines) + "\n")
+
+
+def write_drill_nc_grouped(
+    path: Path,
+    groups: list[tuple[int, MachineSettings, list[DrillHit], float]],
+    *,
+    settings: MachineSettings,
+    depth_mm: float,
+) -> None:
+    """Write one drill file with a tool change per hole-size group."""
+    lines = _header(settings, "2D Drilling")
+    for tool_number, tool_settings, hits, diameter in groups:
+        if not hits:
+            continue
+        lines.append(f"; T{tool_number} holes Ø {diameter:g} mm ({len(hits)})")
+        lines.append(f"T{tool_number} M6")
+        lines.append(f"S{tool_settings.spindle_rpm} M3")
+        lines.append(_coolant(tool_settings, True))
+        lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
+        for hit in hits:
+            lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
+            lines.append(f"G0 Z{_retract_z(settings):.3f}")
+            lines.append(f"G1 Z{-depth_mm:.4f} F{tool_settings.plunge_mm_min:.1f}")
+            lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
+        lines.append(_coolant(tool_settings, False))
+        lines.append("M5")
+    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
     lines.append("M2")
     path.write_text("\n".join(lines) + "\n")
 

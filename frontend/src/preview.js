@@ -76,6 +76,7 @@ export class BoardPreview {
     this.drills = [];
     this.bounds = null;
     this.visibility = {};
+    this.toolpaths = [];
     this.scale = 1;
     this.offsetX = 0;
     this.offsetY = 0;
@@ -164,6 +165,7 @@ export class BoardPreview {
     this.drills = [];
     this.bounds = null;
     this.visibility = {};
+    this.toolpaths = [];
     this._images = {};
     this.scale = 1;
     this.offsetX = 0;
@@ -173,6 +175,11 @@ export class BoardPreview {
 
   setVisible(name, visible) {
     this.visibility[name] = visible;
+    this.draw();
+  }
+
+  setToolpaths(paths) {
+    this.toolpaths = Array.isArray(paths) ? paths : [];
     this.draw();
   }
 
@@ -343,7 +350,9 @@ export class BoardPreview {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, w, h);
 
-    // Draw Gerber layer images aligned to their own bounds
+    const hasToolpaths = this.toolpaths.length > 0;
+    ctx.save();
+    if (hasToolpaths) ctx.globalAlpha = 0.28;
     for (const layer of this.layers) {
       if (!this.visibility[layer.name]) continue;
       const img = this._images[layer.name];
@@ -353,9 +362,12 @@ export class BoardPreview {
       const p1 = this.worldToScreen(b.max_x, b.min_y);
       ctx.drawImage(img, p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
     }
+    ctx.restore();
+
+    this._drawToolpaths(ctx);
 
     // Drill hits — any visible drill group member enables overlay
-    if (this._drillVisible()) {
+    if (this._drillVisible() && !this.toolpaths.length) {
       for (const hit of this.drills) {
         const p = this.worldToScreen(hit.x, hit.y);
         const r = Math.max(2, (hit.diameter * this.scale) / 2);
@@ -379,6 +391,47 @@ export class BoardPreview {
     }
 
     this._drawScaleRuler(ctx, w, h);
+  }
+
+  _pathColor(file, kind) {
+    if (kind === "drill" || String(file).startsWith("drill")) return "rgba(239, 68, 68, 0.95)";
+    if (String(file).includes("outline")) return "rgba(148, 163, 184, 0.95)";
+    return "rgba(245, 166, 35, 0.95)";
+  }
+
+  _drawToolpaths(ctx) {
+    if (!this.toolpaths.length) return;
+    for (const path of this.toolpaths) {
+      const pts = path.points || [];
+      const color = this._pathColor(path.file, path.kind);
+      if (path.kind === "drill") {
+        for (const pt of pts) {
+          const p = this.worldToScreen(pt[0], pt[1]);
+          const r = Math.max(2.5, 0.45 * this.scale);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.55)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+        continue;
+      }
+      if (pts.length < 2) continue;
+      ctx.beginPath();
+      const first = this.worldToScreen(pts[0][0], pts[0][1]);
+      ctx.moveTo(first.x, first.y);
+      for (let i = 1; i < pts.length; i++) {
+        const p = this.worldToScreen(pts[i][0], pts[i][1]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
   }
 }
 

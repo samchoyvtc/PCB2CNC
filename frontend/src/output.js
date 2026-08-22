@@ -1,14 +1,27 @@
 /** Generation + download UI. */
 
-export async function generateJob(jobId, settings) {
+export async function generateJob(jobId, settings, plan) {
   const res = await fetch(`/api/jobs/${jobId}/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings }),
+    body: JSON.stringify({ settings, plan }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.detail || "Generation failed");
+  }
+  return data;
+}
+
+export async function previewPath(jobId, settings, plan) {
+  const res = await fetch(`/api/jobs/${jobId}/preview-path`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings, plan }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || "Path preview failed");
   }
   return data;
 }

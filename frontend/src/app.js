@@ -4,9 +4,11 @@ import { readSettings } from "./settings.js";
 import { generateJob, renderDownloads, showToolpathPreview } from "./output.js";
 import {
   getSelectedToolNumber,
+  listMachineTools,
   loadMachineTools,
   uploadMachineTools,
 } from "./tools.js";
+import { mountGenerateForm, readGeneratePlan } from "./generate.js";
 
 const statusEl = document.getElementById("status");
 const fileListEl = document.getElementById("file-list");
@@ -23,6 +25,7 @@ const panelPreview = document.getElementById("panel-preview");
 const panelLayers = document.getElementById("panel-layers");
 const panelMachineWrap = document.getElementById("panel-machine-wrap");
 const panelMachine = document.getElementById("panel-machine");
+const panelGenerateWrap = document.getElementById("panel-generate-wrap");
 const convertSection = document.getElementById("convert-section");
 const progressWrap = document.getElementById("progress-wrap");
 const progressFill = document.getElementById("progress-fill");
@@ -52,6 +55,8 @@ let jobId = null;
 let currentStage = 1;
 let busy = false;
 let toolsLoaded = false;
+let lastPreview = null;
+let generateMountedFor = null;
 const board = new BoardPreview(document.getElementById("board-canvas"));
 
 function setStatus(message, kind = "") {
@@ -82,6 +87,8 @@ function resetJob() {
   jobId = null;
   currentStage = 1;
   busy = false;
+  lastPreview = null;
+  generateMountedFor = null;
   fileInput.value = "";
   fileListEl.innerHTML = "";
   layerTogglesEl.innerHTML = "";
@@ -108,19 +115,46 @@ function setStage(n) {
   updateNextButton();
 }
 
+function previewTitle(kind) {
+  if (kind === "copper") return "CNC path · Copper engraving";
+  if (kind === "drill") return "CNC path · Drilling";
+  if (kind === "outline") return "CNC path · Board outline";
+  return "Board preview";
+}
+
+function setPreviewHeading(text) {
+  const heading = panelPreview?.querySelector("h2");
+  if (heading) heading.textContent = text;
+}
+
 function showPanel(tab) {
   const isMachine = tab === "machine";
+  const isGenerate = tab === "generate";
   document.body.classList.toggle("view-machine", isMachine);
+  document.body.classList.toggle("view-generate", isGenerate);
   document.body.classList.toggle("view-preview", !isMachine);
 
-  panelInput.hidden = isMachine;
+  panelInput.hidden = isMachine || isGenerate;
   panelPreview.hidden = isMachine;
-  panelLayers.hidden = isMachine;
+  panelLayers.hidden = isMachine || isGenerate;
   panelMachineWrap.hidden = !isMachine;
   panelMachine.hidden = !isMachine;
+  if (panelGenerateWrap) panelGenerateWrap.hidden = !isGenerate;
+
+  if (!isGenerate) {
+    board.setToolpaths([]);
+    setPreviewHeading("Board preview");
+  }
 
   if (isMachine) {
     ensureToolsLoaded();
+  }
+  if (isGenerate) {
+    refreshGenerateForm();
+    requestAnimationFrame(() => {
+      board.resize();
+      board.fit();
+    });
   }
 }
 
@@ -159,6 +193,60 @@ function goMachine() {
   }
   showPanel("machine");
   if (currentStage < 3) setStage(2);
+}
+
+function goGenerate() {
+  if (!jobId) {
+    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    return;
+  }
+  if (!lastPreview) {
+    setStatus("Finish Stage 1 Preview before generating", "error");
+    return;
+  }
+  showPanel("generate");
+  if (currentStage < 4) setStage(3);
+}
+
+function generatePreviewCtx() {
+  return {
+    getJobId: () => jobId,
+    getSettings: () => {
+      const settings = readSettings(settingsForm);
+      settings.tool_number = getSelectedToolNumber(settings.tool_number || 2);
+      return settings;
+    },
+    setStatus,
+    onPathPreview: (result) => {
+      board.setToolpaths(result.paths || []);
+      const file = (result.files || [])[0] || "";
+      const kind = file.startsWith("drill")
+        ? "drill"
+        : file.includes("outline")
+          ? "outline"
+          : "copper";
+      setPreviewHeading(previewTitle(kind));
+      requestAnimationFrame(() => {
+        board.resize();
+        board.draw();
+      });
+    },
+  };
+}
+
+async function refreshGenerateForm() {
+  await ensureToolsLoaded();
+  if (!lastPreview || !panelGenerateWrap) return;
+  if (generateMountedFor === jobId) {
+    panelGenerateWrap._previewCtx = generatePreviewCtx();
+    return;
+  }
+  mountGenerateForm(panelGenerateWrap, {
+    preview: lastPreview,
+    tools: listMachineTools(),
+    ...generatePreviewCtx(),
+  });
+  generateMountedFor = jobId;
 }
 
 function renderFiles(files) {
@@ -224,6 +312,8 @@ async function loadPreview(id) {
   }
 
   setProgress(true, 100, "Preview complete", "100%");
+  lastPreview = data;
+  generateMountedFor = null;
   await board.setPreview(data);
   renderLayerToggles(
     layerTogglesEl,
@@ -274,14 +364,16 @@ async function onZip(file) {
 async function runGenerate() {
   if (!jobId) return;
   try {
-    showPanel("machine");
+    await refreshGenerateForm();
+    showPanel("generate");
     setStage(3);
     setStatus("Stage 3 · Generating CNC G-code…");
     busy = true;
     updateNextButton();
     const settings = readSettings(settingsForm);
     settings.tool_number = getSelectedToolNumber(settings.tool_number || 2);
-    const result = await generateJob(jobId, settings);
+    const plan = readGeneratePlan(panelGenerateWrap);
+    const result = await generateJob(jobId, settings, plan);
     renderDownloads(downloadsEl, jobId, result.files);
     showToolpathPreview(toolpathImg, result.toolpath_preview_png_base64);
     setStatus(`Stage 4 Convert ready · ${result.message}`, "ok");
@@ -289,7 +381,8 @@ async function runGenerate() {
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
-    setStage(2);
+    setStage(3);
+    showPanel("generate");
   } finally {
     busy = false;
     updateNextButton();
@@ -300,17 +393,16 @@ async function nextStep() {
   if (!jobId || busy) return;
   if (currentStage <= 1) {
     goMachine();
-    setStatus("Stage 2 · Configure machine settings, then press Next step", "ok");
+    setStatus("Stage 2 · Board setting, then press Next step", "ok");
     return;
   }
   if (currentStage === 2) {
-    await runGenerate();
+    goGenerate();
+    setStatus("Stage 3 · Choose layers and tools, then press Next step to generate", "ok");
     return;
   }
   if (currentStage === 3) {
-    showPanel("machine");
-    setStage(4);
-    setStatus("Stage 4 · Download converted .nc files below", "ok");
+    await runGenerate();
   }
 }
 
@@ -330,12 +422,12 @@ pills[1].addEventListener("click", goPreview);
 pills[2].addEventListener("click", goMachine);
 pills[3].addEventListener("click", () => {
   if (!jobId) return;
-  runGenerate();
+  goGenerate();
 });
 pills[4].addEventListener("click", () => {
   if (!jobId) return;
-  showPanel("machine");
   if (currentStage >= 4) {
+    showPanel("generate");
     setStage(4);
     setStatus("Stage 4 · Download converted .nc files below", "ok");
   } else {
@@ -353,6 +445,7 @@ btnResetHeader.addEventListener("click", doReset);
 
 document.getElementById("btn-reload-tools").addEventListener("click", async () => {
   toolsLoaded = false;
+  generateMountedFor = null;
   await ensureToolsLoaded();
 });
 
@@ -368,6 +461,7 @@ toolsFileInput.addEventListener("change", async () => {
       setStatus,
     });
     toolsLoaded = true;
+    generateMountedFor = null;
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");

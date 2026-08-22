@@ -49,6 +49,10 @@ export function getSelectedToolNumber(fallback = 2) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+export function listMachineTools() {
+  return toolsCache.tools.slice();
+}
+
 export function getSelectedToolCuts() {
   const tool = getSelectedTool();
   const n = (keys, fallback) => {

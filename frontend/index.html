@@ -153,16 +153,33 @@
     body.view-machine main {
       grid-template-columns: 1fr;
     }
+    body.view-generate main {
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+    }
     body.view-machine #panel-input,
     body.view-machine #panel-preview,
-    body.view-machine #panel-layers {
+    body.view-machine #panel-layers,
+    body.view-generate #panel-input,
+    body.view-generate #panel-layers {
       display: none !important;
+    }
+    body.view-generate #panel-preview {
+      display: flex !important;
+      min-height: 0;
     }
     body.view-machine #panel-machine-wrap {
       display: block;
       max-width: 1100px;
       width: 100%;
       margin: 0 auto;
+    }
+    body.view-generate #panel-generate-wrap {
+      display: block;
+      max-width: none;
+      width: 100%;
+      margin: 0;
+      overflow: auto;
+      max-height: calc(100vh - 8.75rem);
     }
     body.view-machine #panel-machine {
       display: block !important;
@@ -625,6 +642,11 @@
       border: 1px solid rgba(255,255,255,0.2);
       flex: 0 0 auto;
     }
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.65rem;
+    }
     .field {
       display: grid;
       gap: 0.25rem;
@@ -644,7 +666,67 @@
       width: auto;
       justify-self: end;
     }
-    .field input {
+    .safe-pos {
+      margin: 0.15rem 0 0.2rem;
+    }
+    .safe-pos > summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.48rem 0.7rem;
+      border-radius: 8px;
+      background: #3a3a3c;
+      color: #f3f3f3;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+    }
+    .safe-pos > summary::-webkit-details-marker { display: none; }
+    .safe-pos > summary::before {
+      content: "";
+      width: 0.45rem;
+      height: 0.45rem;
+      border-right: 1.6px solid #f3f3f3;
+      border-bottom: 1.6px solid #f3f3f3;
+      transform: rotate(45deg);
+      margin-top: -0.2rem;
+      flex: 0 0 auto;
+    }
+    .safe-pos:not([open]) > summary::before {
+      transform: rotate(-45deg);
+      margin-top: 0;
+      margin-left: 0.1rem;
+    }
+    .safe-pos-row {
+      display: grid;
+      grid-template-columns: minmax(7.2rem, 1fr) 6.6rem auto;
+      align-items: center;
+      gap: 0.55rem;
+      margin: 0.7rem 0 0;
+    }
+    .safe-pos-row label {
+      text-align: right;
+      font-size: 0.82rem;
+      color: var(--text);
+    }
+    .safe-pos-row input {
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid #5a5a5e;
+      background: #1c1c1e;
+      color: var(--text);
+      padding: 0.38rem 0.5rem;
+      font: inherit;
+      font-variant-numeric: tabular-nums;
+    }
+    .safe-pos-row .unit {
+      color: var(--text);
+      font-size: 0.82rem;
+    }
+    .field input,
+    .field select {
       width: 100%;
       border-radius: 8px;
       border: 1px solid var(--line);
@@ -652,6 +734,129 @@
       color: var(--text);
       padding: 0.5rem 0.65rem;
       font: inherit;
+    }
+    .gen-lede {
+      margin: -0.25rem 0 1.1rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .gen-card {
+      margin: 0 0 1rem;
+      padding: 1rem 1.05rem 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(7, 11, 20, 0.45);
+      border-left: 4px solid var(--accent2);
+    }
+    .gen-card.gen-copper { border-left-color: var(--accent); }
+    .gen-card.gen-drill { border-left-color: #f97316; }
+    .gen-card.gen-outline { border-left-color: #94a3b8; }
+    .gen-card h3 {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 650;
+    }
+    .gen-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.35rem;
+    }
+    .gen-card-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-shrink: 0;
+    }
+    .gen-preview-btn {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--bg2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.32rem 0.7rem;
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .gen-preview-btn:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .gen-card.is-previewing {
+      box-shadow: inset 0 0 0 1px rgba(245, 166, 35, 0.55);
+    }
+    .gen-hint {
+      margin: 0.25rem 0 0.75rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .gen-checks {
+      display: grid;
+      gap: 0.45rem;
+      margin-bottom: 0.75rem;
+    }
+    .gen-check {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.55rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .gen-check strong { display: block; font-weight: 650; }
+    .gen-check em {
+      display: block;
+      font-style: normal;
+      color: #fdba74;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+    }
+    .gen-size-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(7, 11, 20, 0.35);
+    }
+    .gen-size-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    .gen-size-table th,
+    .gen-size-table td {
+      padding: 0.4rem 0.55rem;
+      border-bottom: 1px solid rgba(42, 54, 80, 0.85);
+      text-align: left;
+    }
+    .gen-size-table th {
+      color: var(--muted);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .gen-size-table td {
+      font-family: "JetBrains Mono", monospace;
+    }
+    .gen-size-table select {
+      width: 100%;
+      min-width: 12rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--bg0);
+      color: var(--text);
+      padding: 0.35rem 0.5rem;
+      font: inherit;
+    }
+    .gen-size-empty {
+      margin: 0;
+      padding: 0.7rem 0.8rem;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    #gen-add-drill {
+      margin: 0 0 1rem;
     }
     #downloads {
       list-style: none;
@@ -738,8 +943,18 @@
       <div class="tab-panel" id="panel-machine" role="tabpanel">
         <div class="machine-grid">
           <div>
-            <h2>2 · Machine settings</h2>
+            <h2>Board setting</h2>
             <form id="settings-form">
+              <div class="field-row">
+                <div class="field">
+                  <label for="board_width_mm">Width (mm)</label>
+                  <input id="board_width_mm" name="board_width_mm" type="number" step="0.1" value="100" />
+                </div>
+                <div class="field">
+                  <label for="board_length_mm">Length (mm)</label>
+                  <input id="board_length_mm" name="board_length_mm" type="number" step="0.1" value="150" />
+                </div>
+              </div>
               <div class="field">
                 <label for="engraving_depth_mm">Copper engrave depth (mm)</label>
                 <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
@@ -748,10 +963,19 @@
                 <label for="drill_depth_mm">Drill depth (mm)</label>
                 <input id="drill_depth_mm" name="drill_depth_mm" type="number" step="0.01" value="1.6" />
               </div>
-              <div class="field">
-                <label for="safe_z_mm">Safe Z (mm)</label>
-                <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.5" value="15" />
-              </div>
+              <details class="safe-pos" open>
+                <summary>Safe Position</summary>
+                <div class="safe-pos-row">
+                  <label for="safe_z_mm">Clearance Height</label>
+                  <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.001" value="15.000" />
+                  <span class="unit">mm</span>
+                </div>
+                <div class="safe-pos-row">
+                  <label for="retract_z_mm">Retract Height</label>
+                  <input id="retract_z_mm" name="retract_z_mm" type="number" step="0.001" value="3.000" />
+                  <span class="unit">mm</span>
+                </div>
+              </details>
             </form>
           </div>
           <div>
@@ -778,9 +1002,69 @@
             </section>
           </div>
         </div>
+      </div>
+    </aside>
+
+    <aside class="panel" id="panel-generate-wrap" hidden>
+      <div id="panel-generate">
+        <h2>Generate CNC path</h2>
+        <p class="gen-lede">Pick a layer and tool for each process. Feeds, spindle, and step-down come from that tool’s PCB row.</p>
+
+        <section class="gen-card gen-copper">
+          <div class="gen-card-head">
+            <h3>1 · PCB copper trace engraving</h3>
+            <div class="gen-card-actions">
+              <button type="button" class="gen-preview-btn" data-op="copper">Preview</button>
+            </div>
+          </div>
+          <p class="gen-hint">One isolation pass on the selected Gerber layer.</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="gen-copper-layer">Layer</label>
+              <select id="gen-copper-layer"></select>
+            </div>
+            <div class="field">
+              <label for="gen-copper-tool">Tool</label>
+              <select id="gen-copper-tool"></select>
+            </div>
+          </div>
+        </section>
+
+        <div id="gen-drills"></div>
+        <button type="button" id="gen-add-drill">Add drilling process</button>
+
+        <section class="gen-card gen-outline">
+          <div class="gen-card-head">
+            <h3>3 · Board outline cut</h3>
+            <div class="gen-card-actions">
+              <button type="button" class="gen-preview-btn" data-op="outline">Preview</button>
+            </div>
+          </div>
+          <p class="gen-hint">Through-cut the board, leaving holding tabs so the part stays in the stock.</p>
+          <div class="field-row">
+            <div class="field">
+              <label for="gen-outline-layer">Outline layer</label>
+              <select id="gen-outline-layer"></select>
+            </div>
+            <div class="field">
+              <label for="gen-outline-tool">Tool</label>
+              <select id="gen-outline-tool"></select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="gen-tab-count">Holding tabs</label>
+              <input id="gen-tab-count" type="number" min="0" max="32" step="1" value="4" />
+            </div>
+            <div class="field">
+              <label for="gen-tab-width">Tab width (mm)</label>
+              <input id="gen-tab-width" type="number" min="0.2" max="20" step="0.1" value="2" />
+            </div>
+          </div>
+        </section>
 
         <div id="convert-section" hidden>
-          <h2 style="margin-top:1.25rem">4 · Convert output</h2>
+          <h2 style="margin-top:0.35rem">4 · Convert output</h2>
           <ul id="downloads"></ul>
           <img id="toolpath-preview" alt="Toolpath verification preview" />
         </div>
@@ -788,6 +1072,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js?v=machine-depths-1"></script>
+  <script type="module" src="/src/app.js?v=path-preview-canvas-1"></script>
 </body>
 </html>

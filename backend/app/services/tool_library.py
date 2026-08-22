@@ -117,6 +117,18 @@ def resolve_library_path(explicit: Path | None = None) -> Path | None:
     return None
 
 
+def cuts_for_tool_number(number: int) -> dict[str, Any]:
+    """Return one PAEN tool row by tool number, or empty dict."""
+    data = load_tool_library()
+    for row in data.get("tools") or []:
+        try:
+            if int(row.get("Number") or 0) == int(number):
+                return row
+        except (TypeError, ValueError):
+            continue
+    return {}
+
+
 def load_tool_library(path: Path | None = None) -> dict[str, Any]:
     resolved = resolve_library_path(path)
     if resolved is None:
