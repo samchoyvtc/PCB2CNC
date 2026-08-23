@@ -97,6 +97,7 @@ export class BoardPreview {
     this.bounds = null;
     this.visibility = {};
     this.toolpaths = [];
+    this.mirrorX = false;
     this.showRapids = false;
     this.scale = 1;
     this.offsetX = 0;
@@ -200,6 +201,7 @@ export class BoardPreview {
     this.bounds = null;
     this.visibility = {};
     this.toolpaths = [];
+    this.mirrorX = false;
     this._images = {};
     this.scale = 1;
     this.offsetX = 0;
@@ -211,6 +213,22 @@ export class BoardPreview {
   setVisible(name, visible) {
     this.visibility[name] = visible;
     this.draw();
+  }
+
+  setMirrorX(on) {
+    this.mirrorX = !!on;
+    this.draw();
+  }
+
+  _mirrorPivot() {
+    const profile = this.layers.find((layer) => layer.kind === "profile" && layer.bounds);
+    return profile?.bounds || this.bounds;
+  }
+
+  _mirrorWorldX(x) {
+    const pivot = this._mirrorPivot();
+    if (!this.mirrorX || !pivot) return x;
+    return pivot.min_x + pivot.max_x - x;
   }
 
   showSelectedLayer(name) {
@@ -418,7 +436,23 @@ export class BoardPreview {
       const b = layer.bounds;
       const p0 = this.worldToScreen(b.min_x, b.max_y);
       const p1 = this.worldToScreen(b.max_x, b.min_y);
-      ctx.drawImage(img, p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+      const top = p0.y;
+      const height = p1.y - p0.y;
+      const left = Math.min(p0.x, p1.x);
+      const width = Math.abs(p1.x - p0.x);
+      const pivot = this._mirrorPivot();
+      if (this.mirrorX && pivot) {
+        const boardLeft = this.worldToScreen(pivot.min_x, 0).x;
+        const boardRight = this.worldToScreen(pivot.max_x, 0).x;
+        const destLeft = boardLeft + boardRight - (left + width);
+        ctx.save();
+        ctx.translate(destLeft + width, top);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, 0, 0, width, height);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+      }
     }
     ctx.restore();
 
@@ -427,7 +461,7 @@ export class BoardPreview {
     // Drill hits — any visible drill group member enables overlay
     if (this._drillVisible() && !this.toolpaths.length) {
       for (const hit of this.drills) {
-        const p = this.worldToScreen(hit.x, hit.y);
+        const p = this.worldToScreen(this._mirrorWorldX(hit.x), hit.y);
         const r = Math.max(2, (hit.diameter * this.scale) / 2);
         ctx.beginPath();
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);

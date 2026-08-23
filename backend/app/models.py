@@ -131,6 +131,7 @@ class GeneratePlan(BaseModel):
     copper_bottom: Optional[CopperOp] = None
     drills: list[DrillOp] = Field(default_factory=list)
     outline: Optional[OutlineOp] = None
+    mirror: bool = False
 
 
 class GenerateRequest(BaseModel):

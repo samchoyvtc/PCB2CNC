@@ -27,6 +27,7 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Right-hand settings column; the Stage 1 board preview stays on the left (~60% / 40%).
 - **Preview** on each process card overlays that job’s toolpaths on the board (toggle on/off).
 - Changing **Layer** on copper engraving shows that Gerber on the canvas (other copper/silk/mask layers hide; profile stays on).
+- **Mirror** switch at the top of the panel (off by default) flips copper, drill, and outline left-to-right around the profile center. Gerber preview, overlays, and Convert G-code all follow it. Use after turning the board over.
 - **Hide rapids** switch appears here (and on Convert) once paths exist; on by default so G0 travel is hidden.
 - Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
 - Isolation follows copper **outer** contours and slots cut into large pours (Euclidean offset by tip radius). Pad drill holes are not cut as paths. Long outlines are not thinned to a 400-point cap, so chords do not cut through pads.
@@ -36,12 +37,12 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a selected board outline, leaving traces).
 - Fields, top to bottom: Strategy, Layer, Board outline (pocket only), Tool (default T2), Engraving depth (default `0.15 mm`), Isolation passes (contour only).
 - Extra contour passes step farther out using the tool’s step-over.
-- Layer can be copper top or copper bottom (one side per job). Same contour/pocket process in board XY (no X-mirror). Pocket always uses the profile Gerber as the board outline, even if that field is omitted.
+- Layer can be copper top or copper bottom (one side per job). Same contour/pocket process in board XY; turn on **Mirror** to X-flip the whole job. Pocket always uses the profile Gerber as the board outline, even if that field is omitted.
 
 **2 · PCB drilling**
 - Drill depth (default `1.6 mm`) and one or more Excellon files.
 - Table: hole Ø, count, tool (nearest tip by default), strategy **drill** or **pocket**.
-- Drill: single plunge. Pocket: mill concentric circles so a smaller corn mill can open a hole larger than the tool. Falls back to a plunge if the hole is not larger than the tip.
+- Drill: single plunge. Pocket: mill concentric circles so a smaller corn mill can open a hole larger than the tool, one Step Down layer at a time (from the selected tool’s PCB row). Falls back to a plunge if the hole is not larger than the tip.
 - Preview colours follow the assigned tool; hole size is shown in the legend.
 
 **3 · Board outline cut**
@@ -94,12 +95,13 @@ Other library materials (copper, aluminum, wood, etc.) are ignored.
 
 ## User Workflow
 
-1. Drag-drop PCB CAM zip (Gerber + drill).
-2. Render and preview layers on canvas (zoom, pan, fit-to-view, color toggles).
-3. Open Board setting: confirm stock size, depths, and Safe Position.
-4. Pick a tool from the 5-column list; remaining values appear in **Tool properties**.
-5. Generate: pick copper Layer (top or bottom), tool, and strategy; the canvas shows that Gerber. Preview the CNC path (Hide rapids on if travel cluttered).
-6. Convert: inspect mill order or G-code, then download `.nc`.
+1. Double-click `Start PCB2CNC.command` (Mac) or `Start PCB2CNC.bat` (Windows), or start uvicorn manually.
+2. Drag-drop PCB CAM zip (Gerber + drill).
+3. Render and preview layers on canvas (zoom, pan, fit-to-view, color toggles).
+4. Open Board setting: confirm stock size, depths, and Safe Position.
+5. Pick a tool from the 5-column list; remaining values appear in **Tool properties**.
+6. Generate: pick copper Layer (top or bottom), tool, and strategy; the canvas shows that Gerber. Turn on **Mirror** if the board is flipped. Preview the CNC path (Hide rapids on if travel cluttered).
+7. Convert: inspect mill order or G-code, then download `.nc`.
 
 ## Proposed Architecture
 
@@ -158,6 +160,9 @@ flowchart LR
   - `src/generate.js`
   - `src/output.js`
   - `src/app.js`
+- `Start PCB2CNC.command` — double-click to run on Mac
+- `Start PCB2CNC.bat` — double-click to run on Windows
+- `scripts/start_server.py` — shared launcher (venv, packages, uvicorn, browser)
 - `PAEN_TOOLS.tlslibrary` — machine tool library (geometry + PCB properties)
 - `samples/` — Gerber zip fixtures
 - `data/jobs/` — runtime upload workspace

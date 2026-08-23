@@ -426,6 +426,60 @@ def test_generate_with_plan_writes_nc():
 
 
 @pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")
+def test_mirror_flips_copper_and_drill_x():
+    uploaded = client.post(
+        "/api/jobs/upload",
+        files={"file": ("simple.zip", SIMPLE_ZIP.read_bytes(), "application/zip")},
+    )
+    assert uploaded.status_code == 200
+    payload = uploaded.json()
+    job_id = payload["job_id"]
+    copper = next(item["name"] for item in payload["files"] if item["kind"] == "copper_top")
+    profile = next(item["name"] for item in payload["files"] if item["kind"] == "profile")
+    drills = [item["name"] for item in payload["files"] if item["kind"] == "drill"]
+    settings = {"engraving_depth_mm": 0.15, "drill_depth_mm": 1.6}
+    base_plan = {
+        "copper": {"layer": copper, "tool_number": 2, "engrave_mode": "contour"},
+        "drills": [{"layers": drills, "size_map": [{"diameter_mm": 1.0, "tool_number": 4}]}],
+        "outline": {"layer": profile, "tool_number": 4, "tab_count": 4, "tab_width_mm": 2.0},
+    }
+    normal = client.post(
+        f"/api/jobs/{job_id}/generate",
+        json={"settings": settings, "plan": base_plan},
+    )
+    assert normal.status_code == 200, normal.text
+    mirrored = client.post(
+        f"/api/jobs/{job_id}/generate",
+        json={"settings": settings, "plan": {**base_plan, "mirror": True}},
+    )
+    assert mirrored.status_code == 200, mirrored.text
+    assert b"mirror X" in client.get(f"/api/jobs/{job_id}/nc/isolation.nc").content
+    assert b"mirror X" in client.get(f"/api/jobs/{job_id}/nc/outline.nc").content
+
+    def cut_xs(paths, name):
+        xs = []
+        for path in paths:
+            if path.get("file") != name:
+                continue
+            if path.get("kind") not in {"cut", "drill"}:
+                continue
+            for point in path.get("points") or []:
+                xs.append(point[0])
+        return xs
+
+    from app.services.toolpath import _job_mirror_bounds
+
+    bounds = _job_mirror_bounds(job_id)
+    axis = bounds.min_x + bounds.max_x
+    for name in ("isolation.nc", "drill.nc", "outline.nc"):
+        normal_xs = cut_xs(normal.json()["paths"], name)
+        mirrored_xs = cut_xs(mirrored.json()["paths"], name)
+        assert normal_xs and mirrored_xs, name
+        assert min(mirrored_xs) == pytest.approx(axis - max(normal_xs), abs=0.8)
+        assert max(mirrored_xs) == pytest.approx(axis - min(normal_xs), abs=0.8)
+
+
+@pytest.mark.skipif(not SIMPLE_ZIP.exists(), reason="missing TEST_Gerber_Simple.zip")
 def test_preview_path_for_outline():
     uploaded = client.post(
         "/api/jobs/upload",
@@ -740,3 +794,26 @@ def test_write_drill_pocket_emits_xy_feed(tmp_path):
     assert " mm drill " in drill_text
     assert "G1 X" not in drill_text
     assert drill_text != text
+
+
+def test_write_drill_pocket_steps_down_in_z(tmp_path):
+    import re
+
+    from app.models import MachineSettings
+    from app.services.parser import DrillHit
+    from app.services.postprocess import write_drill_nc_grouped
+
+    settings = MachineSettings(step_down_mm=0.4, drill_depth_mm=1.6)
+    hits = [DrillHit(x=10.0, y=20.0, diameter=3.2, tool="T6")]
+    path = tmp_path / "drill.nc"
+    write_drill_nc_grouped(
+        path,
+        [(6, settings, hits, 3.2, "pocket")],
+        settings=settings,
+        depth_mm=1.6,
+    )
+    text = path.read_text()
+    depths = [float(value) for value in re.findall(r"^G1 Z(-[\d.]+)", text, re.M)]
+    assert depths == [-0.4, -0.8, -1.2, -1.6]
+    assert text.find("G1 Z-0.4000") < text.find("G1 X")
+    assert text.find("G1 Z-1.6000") > text.find("G1 X")

@@ -170,8 +170,12 @@ function showPanel(tab) {
 
   if (!isGenerate && !isConvert) {
     board.setToolpaths([]);
+    board.setMirrorX(false);
     if (panelGenerateWrap) panelGenerateWrap._overlays = {};
     setPreviewHeading("Board preview");
+  }
+  if (isConvert) {
+    board.setMirrorX(!!panelGenerateWrap?.querySelector("#gen-mirror")?.checked);
   }
 
   if (isMachine) {
@@ -255,6 +259,7 @@ function generatePreviewCtx() {
     },
     setStatus,
     onSelectLayer: showSelectedGerber,
+    onMirrorChange: (on) => board.setMirrorX(on),
     onPathPreview: (result, op, visible = true) => {
       if (!panelGenerateWrap._overlays) panelGenerateWrap._overlays = {};
       if (visible) panelGenerateWrap._overlays[op] = result.paths || [];
@@ -282,6 +287,7 @@ async function refreshGenerateForm() {
       && panelGenerateWrap.querySelector("#gen-tab-offset")) {
     panelGenerateWrap._previewCtx = ctx;
     ctx.onSelectLayer?.(panelGenerateWrap.querySelector(".gen-copper-layer")?.value);
+    ctx.onMirrorChange?.(panelGenerateWrap.querySelector("#gen-mirror")?.checked);
     return;
   }
   mountGenerateForm(panelGenerateWrap, {

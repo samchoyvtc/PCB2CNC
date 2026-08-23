@@ -195,15 +195,25 @@ def write_drill_nc_grouped(
         lines.append(_coolant(tool_settings, True))
         lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
         feed = tool_settings.feed_mm_min
+        step_down = float(tool_settings.step_down_mm or settings.step_down_mm or 0.1)
+        step_down = max(step_down, 0.01)
         for hit in hits:
             lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
             lines.append(f"G0 Z{_retract_z(settings):.3f}")
-            lines.append(f"G1 Z{-depth_mm:.4f} F{tool_settings.plunge_mm_min:.1f}")
-            for radius in radii:
-                for x, y in _circle_xy(hit.x, hit.y, radius):
-                    lines.append(f"G1 X{x:.4f} Y{y:.4f} F{feed:.1f}")
-            if radii:
+            if not radii:
+                lines.append(f"G1 Z{-depth_mm:.4f} F{tool_settings.plunge_mm_min:.1f}")
+                lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
+                continue
+            depth = 0.0
+            while depth < depth_mm - 1e-9:
+                depth = min(depth_mm, depth + step_down)
+                lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
+                lines.append(f"G1 Z{-depth:.4f} F{tool_settings.plunge_mm_min:.1f}")
+                for radius in radii:
+                    for x, y in _circle_xy(hit.x, hit.y, radius):
+                        lines.append(f"G1 X{x:.4f} Y{y:.4f} F{feed:.1f}")
                 lines.append(f"G1 X{hit.x:.4f} Y{hit.y:.4f} F{feed:.1f}")
+                lines.append(f"G0 Z{_retract_z(settings):.3f}")
             lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
         lines.append(_coolant(tool_settings, False))
         lines.append("M5")

@@ -240,7 +240,7 @@ function renderDrillBlock(preview, tools, { depthMm = 1.6 } = {}) {
         <button type="button" class="gen-preview-btn" data-op="drill" aria-pressed="false">Preview</button>
       </div>
     </div>
-    <p class="gen-hint">Choose one or more drill files, then assign a tool and strategy to each hole size. Pocket mills a circle when the hole is larger than the tool. Preview colours match the tool.</p>
+    <p class="gen-hint">Choose one or more drill files, then assign a tool and strategy to each hole size. Pocket mills concentric circles when the hole is larger than the tool, stepping down by that tool’s Step Down. Preview colours match the tool.</p>
     <div class="field">
       <label>Drill depth (mm)</label>
       <input class="gen-drill-depth" type="number" min="0.01" max="20" step="0.01" value="${Number(depthMm) || 1.6}" />
@@ -349,22 +349,34 @@ function fillCopperCard(card, gerbers, tools, layerName, outlineName, settings) 
   syncPocketOutline(card);
 }
 
+function planMirror(root) {
+  return !!root.querySelector("#gen-mirror")?.checked;
+}
+
+function withMirror(plan, root) {
+  if (!plan) return null;
+  return { ...plan, mirror: planMirror(root) };
+}
+
 function planForCard(root, kind, card) {
   if (kind === "copper") {
     const copper = copperPlanFields(card, root);
     if (!copper) return null;
-    return { copper, drills: [], outline: null };
+    return withMirror({ copper, drills: [], outline: null }, root);
   }
   if (kind === "drill") {
     const layers = [...selectedNames(card)];
     if (!layers.length) return null;
     const size_map = sizeMapFromCard(card);
-    return { copper: null, drills: [{ layers, size_map, depth_mm: drillDepthMm(card) }], outline: null };
+    return withMirror(
+      { copper: null, drills: [{ layers, size_map, depth_mm: drillDepthMm(card) }], outline: null },
+      root
+    );
   }
   if (kind === "outline") {
     const outline = outlinePlanFields(root);
     if (!outline) return null;
-    return { copper: null, drills: [], outline };
+    return withMirror({ copper: null, drills: [], outline }, root);
   }
   return null;
 }
@@ -484,6 +496,15 @@ function bindPreviewClicks(root) {
     else await showCardPreview(root, btn);
   });
   root.addEventListener("change", (event) => {
+    if (event.target?.id === "gen-mirror") {
+      root._previewCtx?.onMirrorChange?.(event.target.checked);
+      const active = [...root.querySelectorAll('.gen-preview-btn[aria-pressed="true"]')];
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        active.forEach((btn) => showCardPreview(root, btn));
+      }, 250);
+      return;
+    }
     const card = event.target.closest(".gen-card");
     const btn = card?.querySelector(".gen-preview-btn");
     if (!btn || btn.getAttribute("aria-pressed") !== "true") return;
@@ -492,7 +513,7 @@ function bindPreviewClicks(root) {
   });
 }
 
-export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, onPathPreview, onSelectLayer } = {}) {
+export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, onPathPreview, onSelectLayer, onMirrorChange } = {}) {
   if (!root) return;
   const copperCard = root.querySelector(".gen-copper-top") || root.querySelector(".gen-copper");
   const outlineLayer = root.querySelector("#gen-outline-layer");
@@ -503,7 +524,7 @@ export function mountGenerateForm(root, { preview, tools, getJobId, getSettings,
   const copperDefault = defaultLayer(gerbers, ["copper_top", "copper_bottom"], 0);
   const outlineDefault = defaultLayer(gerbers, ["profile"], gerbers.length ? gerbers.length - 1 : 0);
 
-  root._previewCtx = { getJobId, getSettings, setStatus, onPathPreview, onSelectLayer };
+  root._previewCtx = { getJobId, getSettings, setStatus, onPathPreview, onSelectLayer, onMirrorChange };
   bindPreviewClicks(root);
   root.querySelectorAll(".gen-preview-btn").forEach((btn) => {
     setPreviewPressed(btn, btn.closest(".gen-card"), false);
@@ -512,6 +533,7 @@ export function mountGenerateForm(root, { preview, tools, getJobId, getSettings,
   const settings = getSettings?.() || {};
   fillCopperCard(copperCard, gerbers, tools, copperDefault?.name, outlineDefault?.name, settings);
   onSelectLayer?.(copperCard?.querySelector(".gen-copper-layer")?.value);
+  onMirrorChange?.(planMirror(root));
   fillSelect(outlineLayer, layerSelectHtml(gerbers, outlineDefault?.name));
   fillSelect(outlineTool, toolSelectHtml(tools, 4));
   const outlineDepth = root.querySelector("#gen-outline-depth");
@@ -590,5 +612,6 @@ export function readGeneratePlan(root) {
     copper,
     drills,
     outline: outlineLayer ? outlinePlanFields(root) : null,
+    mirror: planMirror(root),
   };
 }

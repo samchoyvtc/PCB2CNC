@@ -555,7 +555,7 @@
       cursor: pointer;
     }
     .rapid-switch[hidden],
-    body:not(.view-generate):not(.view-convert) .rapid-switch {
+    body:not(.view-generate):not(.view-convert) .viewer-toolbar .rapid-switch {
       display: none;
     }
     .rapid-switch input {
@@ -931,6 +931,24 @@
       margin: -0.25rem 0 1.1rem;
       color: var(--muted);
       font-size: 0.9rem;
+    }
+    .gen-mirror-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin: 0 0 1rem;
+      padding: 0.85rem 1.05rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(7, 11, 20, 0.45);
+    }
+    .gen-mirror-row .gen-hint {
+      margin: 0.2rem 0 0;
+    }
+    .gen-mirror-row .rapid-switch {
+      margin-left: 0;
+      flex-shrink: 0;
     }
     .gen-card {
       margin: 0 0 1rem;
@@ -1420,6 +1438,16 @@
         <h2>Generate CNC path</h2>
         <p class="gen-lede">Pick a layer and tool for each process. Feeds, spindle, and step-down come from that tool’s PCB row.</p>
 
+        <div class="gen-mirror-row">
+          <div>
+            <strong>Mirror</strong>
+            <p class="gen-hint">Flip copper, drill, and outline left-to-right around the board center. Use after turning the board over.</p>
+          </div>
+          <label class="rapid-switch">
+            <input type="checkbox" id="gen-mirror" role="switch" aria-label="Mirror" />
+          </label>
+        </div>
+
         <section class="gen-card gen-copper gen-copper-top" data-preview-id="copper">
           <div class="gen-card-head">
             <h3>1 · PCB copper trace engraving</h3>
@@ -1554,6 +1582,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js?v=layer-sync-1"></script>
+  <script type="module" src="/src/app.js?v=mirror-x-1"></script>
 </body>
 </html>

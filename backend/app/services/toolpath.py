@@ -11,6 +11,7 @@ import math
 import re
 import shutil
 import subprocess
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -704,6 +705,67 @@ def _builtin_generate(
     return produced
 
 
+def _job_mirror_bounds(job_id: str) -> parser.GerberBounds:
+    """Board box used as the X-mirror pivot (profile if present)."""
+    collected: list[parser.GerberBounds] = []
+    profile: parser.GerberBounds | None = None
+    for meta in zip_ingest.list_cam_files(job_id):
+        path = zip_ingest.job_dir(job_id) / meta["path"]
+        kind = meta["kind"]
+        if kind in {"bom", "unknown"}:
+            continue
+        try:
+            if kind == "drill":
+                hits = parser.parse_excellon(path)
+                if not hits:
+                    continue
+                xs = [hit.x for hit in hits]
+                ys = [hit.y for hit in hits]
+                collected.append(
+                    parser.GerberBounds(min(xs), min(ys), max(xs), max(ys))
+                )
+            else:
+                bounds = parser.parse_gerber_bounds(path)
+                collected.append(bounds)
+                if kind == "profile":
+                    profile = bounds
+        except Exception:
+            continue
+    if profile:
+        return profile
+    if not collected:
+        raise ValueError("Cannot mirror: no board outline or copper bounds")
+    return parser.GerberBounds(
+        min(b.min_x for b in collected),
+        min(b.min_y for b in collected),
+        max(b.max_x for b in collected),
+        max(b.max_y for b in collected),
+    )
+
+
+def _mirror_x(x: float, bounds: parser.GerberBounds) -> float:
+    return bounds.min_x + bounds.max_x - x
+
+
+def _mirror_paths(
+    paths: list[list[tuple[float, float]]],
+    bounds: parser.GerberBounds,
+) -> list[list[tuple[float, float]]]:
+    mirrored: list[list[tuple[float, float]]] = []
+    for path in paths:
+        flipped = [(_mirror_x(x, bounds), y) for x, y in path]
+        flipped.reverse()
+        mirrored.append(flipped)
+    return mirrored
+
+
+def _mirror_hits(
+    hits: list[parser.DrillHit],
+    bounds: parser.GerberBounds,
+) -> list[parser.DrillHit]:
+    return [replace(hit, x=_mirror_x(hit.x, bounds)) for hit in hits]
+
+
 def _emit_copper_nc(
     job_id: str,
     op,
@@ -712,6 +774,7 @@ def _emit_copper_nc(
     filename: str,
     *,
     outline_fallback: str | None = None,
+    mirror_bounds: parser.GerberBounds | None = None,
 ) -> str:
     """Write isolation or pocket G-code for one copper layer."""
     copper_file = _cam_by_name(job_id, op.layer)
@@ -731,6 +794,9 @@ def _emit_copper_nc(
         operation = (
             "Isolation Engraving (bottom)" if bottom else "Isolation Engraving"
         )
+    if mirror_bounds is not None:
+        paths = _mirror_paths(paths, mirror_bounds)
+        operation = f"{operation} (mirror X)"
     write_path_nc(
         out_dir / filename,
         paths,
@@ -756,6 +822,7 @@ def _plan_generate(
     produced: list[str] = []
     tool_rows = tool_library.load_tool_library().get("tools") or []
     outline_fallback = plan.outline.layer if plan.outline else None
+    mirror_bounds = _job_mirror_bounds(job_id) if plan.mirror else None
     if plan.copper:
         produced.append(
             _emit_copper_nc(
@@ -765,6 +832,7 @@ def _plan_generate(
                 out_dir,
                 "isolation.nc",
                 outline_fallback=outline_fallback,
+                mirror_bounds=mirror_bounds,
             )
         )
     if plan.copper_bottom:
@@ -776,6 +844,7 @@ def _plan_generate(
                 out_dir,
                 "isolation_bottom.nc",
                 outline_fallback=outline_fallback,
+                mirror_bounds=mirror_bounds,
             )
         )
 
@@ -784,6 +853,8 @@ def _plan_generate(
         hits: list[parser.DrillHit] = []
         for layer in drill_op.layers:
             hits.extend(parser.parse_excellon(_cam_by_name(job_id, layer)))
+        if mirror_bounds is not None:
+            hits = _mirror_hits(hits, mirror_bounds)
         size_to_tool = {
             round(float(item.diameter_mm), 3): int(item.tool_number)
             for item in drill_op.size_map
@@ -842,11 +913,17 @@ def _plan_generate(
             plan.outline.tab_width_mm,
             plan.outline.tab_offset,
         )
+        if mirror_bounds is not None:
+            segments = _mirror_paths(segments, mirror_bounds)
         write_path_nc(
             out_dir / "outline.nc",
             segments,
             settings=outline_settings,
-            operation="Board Outline (outside)",
+            operation=(
+                "Board Outline (outside, mirror X)"
+                if mirror_bounds is not None
+                else "Board Outline (outside)"
+            ),
             tool_number=plan.outline.tool_number,
             depth_mm=plan.outline.depth_mm or settings.drill_depth_mm,
             include_header=True,

@@ -11,9 +11,20 @@ Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer pr
 3. **Generate** — copper (contour or pocket), drill (plunge or pocket), and outline with holding tabs; overlay paths on the board  
 4. **Convert** — write `.nc` files; mill-order table or G-code inspect; download  
 
-On Generate, **Layer** in copper engraving can be `copper_top` or `copper_bottom` (one side per job). Changing Layer shows that Gerber on the canvas (profile stays on for the board shape). **Pocket** always mills inside the profile / board-outline Gerber. On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.
+On Generate, **Layer** in copper engraving can be `copper_top` or `copper_bottom` (one side per job). Changing Layer shows that Gerber on the canvas (profile stays on for the board shape). **Pocket** always mills inside the profile / board-outline Gerber. **Mirror** (off by default) flips copper, drill, and outline left-to-right around the board center. On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.
 
 ## Quick start
+
+**One click**
+
+- **Mac:** double-click `Start PCB2CNC.command` in Finder. The first time, macOS may ask you to confirm opening it (Right-click → Open).
+- **Windows:** double-click `Start PCB2CNC.bat`.
+
+The launcher creates a local `.venv` if needed, installs Python packages on first run, starts the server, and opens http://127.0.0.1:8000. Leave that window open while you use the app; press Ctrl+C to stop. If the server is already running, it just opens the browser.
+
+Python 3 must already be installed.
+
+**Manual**
 
 ```bash
 python3 -m pip install -r backend/requirements.txt
@@ -21,7 +32,7 @@ cd backend
 PYTHONPATH=. python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Open http://127.0.0.1:8000 and drop a CAM zip from `samples/`.
+Then open http://127.0.0.1:8000 and drop a CAM zip from `samples/`.
 
 Place `PAEN_TOOLS.tlslibrary` in the repo root (or upload it on Board setting) so the six machine tools load. Cutting feeds come from each tool’s PCB material row.
 
