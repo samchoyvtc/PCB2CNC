@@ -1,6 +1,6 @@
 # PCB Gerber-to-G-code MVP Plan
 
-**Version 0.4.2** — One copper side per job (top or bottom Layer); pocket uses the profile Gerber; the canvas follows the selected Layer.
+**Version 0.4.3** — G-code travel optimizations: retract between nearby hops, nearest-neighbor path/drill order, single-pass copper depth, Safe Z only for long travel.
 
 ## Goal
 
@@ -32,6 +32,16 @@ Create a local web-based workflow (inspired by [Carbide Copper](https://copper.c
 - Feeds, spindle, step-over, and step-down come from each selected tool’s PCB row.
 - Isolation follows copper **outer** contours and slots cut into large pours (Euclidean offset by tip radius). Pad drill holes are not cut as paths. Long outlines are not thinned to a 400-point cap, so chords do not cut through pads.
 - Convert (Stage 4) writes the downloadable `.nc` files from this plan.
+
+**G-code travel optimizations (builtin postprocessor)**
+
+Builtin isolation, pocket, outline, and drill writers reduce wasted air time:
+
+1. **Retract vs Safe Z** — Between nearby contours or drill holes, stay at **Retract Height**. Lift to **Clearance Height (Safe Z)** only for long XY hops (beyond a travel threshold), at operation start/end, and at tool changes. Avoids a full Safe Z cycle after every island or hole.
+2. **Nearest-neighbor order** — Contours (and closed-loop start points) and drill hits are ordered with a greedy nearest-neighbor pass from the previous end point so travel does not zig-zag across the board. Closed paths may be rotated so cutting starts at the vertex closest to the approach.
+3. **Single depth pass when depth ≤ step-down** — If total cut depth fits in one step-down, plunge once to full depth with no inter-pass retract. Copper engraving forces step-down ≥ engrave depth so isolation/pocket complete in one Z pass; outline and hole-pocket keep multi-pass step-down for deeper cuts.
+4. *(Deferred)* Contour vs pocket strategy remains a user choice; prefer contour when speed matters.
+5. **Drill retract + hit order** — Within each tool/size group, holes are nearest-neighbor ordered; between holes use Retract Height, with Safe Z only for long hops or group boundaries.
 
 **1 · Copper trace engraving**
 - Strategy: **contour** (isolation around copper) or **pocket** (clear unused copper inside a selected board outline, leaving traces).
@@ -130,7 +140,7 @@ flowchart LR
   1. Parse Gerber into preview rasters + bounds.
   2. Parse Excellon into drill hits.
   3. Generate isolation (contour or pocket), drill (plunge or hole-pocket), and outside outline with holding tabs.
-  4. Post-process to GRBL-compatible G-code with clearance/retract, selected-tool spindle/coolant, and tool changes.
+  4. Post-process to GRBL-compatible G-code with clearance/retract, nearest-neighbor travel order, single-pass shallow copper depth, selected-tool spindle/coolant, and tool changes.
 - Preview requirements:
   - Gerber layers visible immediately after upload.
   - Drill overlay toggleable.
@@ -170,10 +180,12 @@ flowchart LR
 ## CNC Safety & Reliability Guardrails
 
 - Enforce configurable clearance and retract between operations.
+- Between short XY hops inside one operation, travel at Retract Height; use Clearance Height (Safe Z) for long hops, tool changes, and program start/end.
 - Copper engrave depth must not exceed drill depth.
 - Clamp feed/plunge/RPM from the selected tool to machine-safe ranges.
 - Emit coolant from the selected tool’s PCB property (`Y`/`N`).
 - Outline step-down must re-enter at the current segment start (no G1 across an open tab gap).
+- Path and drill ordering must not change cut geometry—only visit order and Z clearance choice.
 
 ## Risks and Mitigations
 

@@ -1,6 +1,6 @@
 # Gerber CNC GUI
 
-**Version 0.4.2** — One copper side per job (top or bottom), pocket bounded by the board profile, Generate Layer switches the canvas Gerber.
+**Version 0.4.3** — One copper side per job (top or bottom), pocket bounded by the board profile, Generate Layer switches the canvas Gerber; G-code travel optimizations (retract between hops, nearest-neighbor order, single-pass copper).
 
 Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer previews and downloadable CNC `.nc` files.
 
