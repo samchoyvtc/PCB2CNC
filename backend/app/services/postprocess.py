@@ -10,6 +10,9 @@ from app.models import MachineSettings
 from app.services import tool_library
 from app.services.parser import DrillHit
 
+# XY hops longer than this lift to Safe Z; shorter hops stay at Retract Height.
+LONG_TRAVEL_MM = 40.0
+
 
 def _header(settings: MachineSettings, title: str) -> list[str]:
     lines = [
@@ -36,6 +39,113 @@ def _coolant(settings: MachineSettings, on: bool) -> str:
     return "M8" if on else "M9"
 
 
+def _xy_dist(
+    a: tuple[float, float] | None,
+    b: tuple[float, float] | None,
+) -> float:
+    if a is None or b is None:
+        return float("inf")
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _is_closed_path(
+    pts: list[tuple[float, float]],
+    *,
+    tol: float = 1e-4,
+) -> bool:
+    if len(pts) < 3:
+        return False
+    return _xy_dist(pts[0], pts[-1]) <= tol
+
+
+def _rotate_closed_start(
+    pts: list[tuple[float, float]],
+    toward: tuple[float, float] | None,
+) -> list[tuple[float, float]]:
+    """Rotate a closed polyline so cutting starts nearest to ``toward``."""
+    if toward is None or len(pts) < 3 or not _is_closed_path(pts):
+        return pts
+    body = pts[:-1] if _xy_dist(pts[0], pts[-1]) <= 1e-4 else list(pts)
+    if not body:
+        return pts
+    best = min(range(len(body)), key=lambda i: _xy_dist(body[i], toward))
+    if best == 0:
+        return pts if _xy_dist(pts[0], pts[-1]) <= 1e-4 else body + [body[0]]
+    rotated = body[best:] + body[:best]
+    rotated.append(rotated[0])
+    return rotated
+
+
+def _order_contours_nearest(
+    contours: list[list[tuple[float, float]]],
+    *,
+    start: tuple[float, float] | None = None,
+) -> list[list[tuple[float, float]]]:
+    """Greedy nearest-neighbor visit order; rotate closed starts toward approach."""
+    remaining = [list(c) for c in contours if len(c) >= 2]
+    if not remaining:
+        return []
+    ordered: list[list[tuple[float, float]]] = []
+    current: tuple[float, float] | None = start if start is not None else (0.0, 0.0)
+    while remaining:
+        best_i = 0
+        best_path = remaining[0]
+        best_dist = float("inf")
+        for i, path in enumerate(remaining):
+            candidate = _rotate_closed_start(path, current)
+            dist = _xy_dist(current, candidate[0])
+            if dist < best_dist:
+                best_dist = dist
+                best_i = i
+                best_path = candidate
+        ordered.append(best_path)
+        current = best_path[-1]
+        remaining.pop(best_i)
+    return ordered
+
+
+def _order_hits_nearest(
+    hits: list[DrillHit],
+    *,
+    start: tuple[float, float] | None = None,
+) -> list[DrillHit]:
+    remaining = list(hits)
+    if not remaining:
+        return []
+    ordered: list[DrillHit] = []
+    current: tuple[float, float] | None = start if start is not None else (0.0, 0.0)
+    while remaining:
+        best_i = min(
+            range(len(remaining)),
+            key=lambda i: _xy_dist(current, (remaining[i].x, remaining[i].y)),
+        )
+        hit = remaining.pop(best_i)
+        ordered.append(hit)
+        current = (hit.x, hit.y)
+    return ordered
+
+
+def _depth_passes(depth_mm: float, step_mm: float) -> list[float]:
+    """Z depths to cut. One pass when total depth fits in a single step-down."""
+    depth = max(float(depth_mm), 0.0)
+    step = max(float(step_mm), 0.01)
+    if depth <= step + 1e-9:
+        return [round(depth, 6)] if depth > 0 else []
+    passes: list[float] = []
+    current = 0.0
+    while current < depth - 1e-9:
+        current = min(depth, current + step)
+        passes.append(round(current, 6))
+    return passes
+
+
+def _travel_z(settings: MachineSettings, distance_mm: float) -> float:
+    """Retract for short hops; Safe Z when the XY hop is long."""
+    if distance_mm > LONG_TRAVEL_MM:
+        return settings.safe_z_mm
+    return _retract_z(settings)
+
+
 def write_path_nc(
     path: Path,
     contours: list[list[tuple[float, float]]],
@@ -48,7 +158,13 @@ def write_path_nc(
     step_down_mm: float | None = None,
     close_open_paths: bool = True,
 ) -> None:
-    step = step_down_mm or settings.step_down_mm or min(0.1, depth_mm)
+    step = (
+        step_down_mm
+        if step_down_mm is not None
+        else (settings.step_down_mm or min(0.1, depth_mm))
+    )
+    step = max(float(step), 0.01)
+    depths = _depth_passes(depth_mm, step)
     lines: list[str] = []
     if include_header:
         lines.extend(_header(settings, operation))
@@ -60,28 +176,42 @@ def write_path_nc(
     lines.append(_coolant(settings, True))
     lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
 
-    for contour in contours:
-        if len(contour) < 2:
-            continue
-        x0, y0 = contour[0]
-        lines.append(f"G0 Z{_retract_z(settings):.3f}")
+    ordered = _order_contours_nearest(contours, start=None)
+    last_xy: tuple[float, float] | None = None
+    retract = _retract_z(settings)
 
-        depth = 0.0
-        while depth < depth_mm - 1e-9:
-            depth = min(depth_mm, depth + step)
-            lines.append(f"G0 X{x0:.4f} Y{y0:.4f}")
+    for contour in ordered:
+        x0, y0 = contour[0]
+        hop = _xy_dist(last_xy, (x0, y0))
+        if last_xy is None:
+            travel_z = settings.safe_z_mm
+        else:
+            travel_z = _travel_z(settings, hop)
+            if travel_z > retract + 1e-9:
+                lines.append(f"G0 Z{travel_z:.3f}")
+
+        lines.append(f"G0 X{x0:.4f} Y{y0:.4f}")
+        if travel_z > retract + 1e-9:
+            lines.append(f"G0 Z{retract:.3f}")
+
+        for pass_i, depth in enumerate(depths):
+            if pass_i > 0 and last_xy != (x0, y0):
+                lines.append(f"G0 X{x0:.4f} Y{y0:.4f}")
             lines.append(f"G1 Z{-depth:.4f} F{settings.plunge_mm_min:.1f}")
             for x, y in contour[1:]:
                 lines.append(f"G1 X{x:.4f} Y{y:.4f} F{settings.feed_mm_min:.1f}")
             # return to start for multi-pass closed paths
             if close_open_paths and contour[0] != contour[-1]:
                 lines.append(
-                    f"G1 X{contour[0][0]:.4f} Y{contour[0][1]:.4f} F{settings.feed_mm_min:.1f}"
+                    f"G1 X{contour[0][0]:.4f} Y{contour[0][1]:.4f} "
+                    f"F{settings.feed_mm_min:.1f}"
                 )
-            lines.append(f"G0 Z{_retract_z(settings):.3f}")
+                last_xy = (contour[0][0], contour[0][1])
+            else:
+                last_xy = (contour[-1][0], contour[-1][1])
+            lines.append(f"G0 Z{retract:.3f}")
 
-        lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
-
+    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
     lines.append(_coolant(settings, False))
     lines.append("M5")
     lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
@@ -109,13 +239,22 @@ def write_drill_nc(
     lines.append(_coolant(settings, True))
     lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
 
-    # peck-ish simple drill cycle
-    for hit in hits:
+    ordered = _order_hits_nearest(hits)
+    last_xy: tuple[float, float] | None = None
+    retract = _retract_z(settings)
+    for hit in ordered:
+        target = (hit.x, hit.y)
+        hop = _xy_dist(last_xy, target)
+        clear_z = _travel_z(settings, hop if last_xy is not None else float("inf"))
+        if last_xy is not None and clear_z > retract + 1e-9:
+            lines.append(f"G0 Z{clear_z:.3f}")
         lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
-        lines.append(f"G0 Z{_retract_z(settings):.3f}")
+        lines.append(f"G0 Z{retract:.3f}")
         lines.append(f"G1 Z{-depth_mm:.4f} F{settings.plunge_mm_min:.1f}")
-        lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
+        lines.append(f"G0 Z{retract:.3f}")
+        last_xy = target
 
+    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
     lines.append(_coolant(settings, False))
     lines.append("M5")
     lines.append("M2")
@@ -197,24 +336,34 @@ def write_drill_nc_grouped(
         feed = tool_settings.feed_mm_min
         step_down = float(tool_settings.step_down_mm or settings.step_down_mm or 0.1)
         step_down = max(step_down, 0.01)
-        for hit in hits:
+        depth_levels = _depth_passes(depth_mm, step_down)
+        retract = _retract_z(settings)
+        ordered_hits = _order_hits_nearest(hits)
+        last_xy: tuple[float, float] | None = None
+        for hit in ordered_hits:
+            target = (hit.x, hit.y)
+            hop = _xy_dist(last_xy, target)
+            clear_z = _travel_z(settings, hop if last_xy is not None else float("inf"))
+            if last_xy is not None and clear_z > retract + 1e-9:
+                lines.append(f"G0 Z{clear_z:.3f}")
             lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
-            lines.append(f"G0 Z{_retract_z(settings):.3f}")
+            lines.append(f"G0 Z{retract:.3f}")
             if not radii:
                 lines.append(f"G1 Z{-depth_mm:.4f} F{tool_settings.plunge_mm_min:.1f}")
-                lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
+                lines.append(f"G0 Z{retract:.3f}")
+                last_xy = target
                 continue
-            depth = 0.0
-            while depth < depth_mm - 1e-9:
-                depth = min(depth_mm, depth + step_down)
-                lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
+            for pass_i, depth in enumerate(depth_levels):
+                if pass_i > 0:
+                    lines.append(f"G0 X{hit.x:.4f} Y{hit.y:.4f}")
                 lines.append(f"G1 Z{-depth:.4f} F{tool_settings.plunge_mm_min:.1f}")
                 for radius in radii:
                     for x, y in _circle_xy(hit.x, hit.y, radius):
                         lines.append(f"G1 X{x:.4f} Y{y:.4f} F{feed:.1f}")
                 lines.append(f"G1 X{hit.x:.4f} Y{hit.y:.4f} F{feed:.1f}")
-                lines.append(f"G0 Z{_retract_z(settings):.3f}")
-            lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
+                lines.append(f"G0 Z{retract:.3f}")
+            last_xy = target
+        lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
         lines.append(_coolant(tool_settings, False))
         lines.append("M5")
     lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
