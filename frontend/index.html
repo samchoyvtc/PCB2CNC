@@ -255,6 +255,18 @@
     }
     @media (max-width: 1200px) {
       main { grid-template-columns: 1fr; }
+      body.view-generate main {
+        grid-template-columns: 1fr;
+      }
+      body.view-generate #panel-preview {
+        position: static;
+        height: min(70vh, 36rem);
+        max-height: min(70vh, 36rem);
+        order: -1;
+      }
+      body.view-generate #panel-generate-wrap {
+        order: 0;
+      }
       body.view-convert {
         height: auto;
         overflow: auto;
