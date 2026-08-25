@@ -255,6 +255,18 @@
     }
     @media (max-width: 1200px) {
       main { grid-template-columns: 1fr; }
+      body.view-generate main {
+        grid-template-columns: 1fr;
+      }
+      body.view-generate #panel-preview {
+        position: static;
+        height: min(70vh, 36rem);
+        max-height: min(70vh, 36rem);
+        order: -1;
+      }
+      body.view-generate #panel-generate-wrap {
+        order: 0;
+      }
       body.view-convert {
         height: auto;
         overflow: auto;
@@ -861,35 +873,15 @@
     .safe-pos {
       margin: 0.15rem 0 0.2rem;
     }
-    .safe-pos > summary {
-      list-style: none;
-      display: flex;
-      align-items: center;
-      gap: 0.45rem;
+    .safe-pos-label {
+      display: block;
       padding: 0.48rem 0.7rem;
       border-radius: 8px;
       background: #3a3a3c;
       color: #f3f3f3;
       font-size: 0.88rem;
       font-weight: 600;
-      cursor: pointer;
       user-select: none;
-    }
-    .safe-pos > summary::-webkit-details-marker { display: none; }
-    .safe-pos > summary::before {
-      content: "";
-      width: 0.45rem;
-      height: 0.45rem;
-      border-right: 1.6px solid #f3f3f3;
-      border-bottom: 1.6px solid #f3f3f3;
-      transform: rotate(45deg);
-      margin-top: -0.2rem;
-      flex: 0 0 auto;
-    }
-    .safe-pos:not([open]) > summary::before {
-      transform: rotate(-45deg);
-      margin-top: 0;
-      margin-left: 0.1rem;
     }
     .safe-pos-row {
       display: grid;
@@ -1391,8 +1383,8 @@
                 <label for="drill_depth_mm">Drill depth (mm)</label>
                 <input id="drill_depth_mm" name="drill_depth_mm" type="number" step="0.01" value="1.6" />
               </div>
-              <details class="safe-pos" open>
-                <summary>Safe Position</summary>
+              <div class="safe-pos">
+                <div class="safe-pos-label">Safe Position</div>
                 <div class="safe-pos-row">
                   <label for="safe_z_mm">Clearance Height</label>
                   <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.001" value="15.000" />
@@ -1403,7 +1395,7 @@
                   <input id="retract_z_mm" name="retract_z_mm" type="number" step="0.001" value="3.000" />
                   <span class="unit">mm</span>
                 </div>
-              </details>
+              </div>
             </form>
           </div>
           <div>

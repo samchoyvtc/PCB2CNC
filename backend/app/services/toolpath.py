@@ -653,15 +653,16 @@ def _builtin_generate(
     if "copper_top" in files:
         paths, _ = _contours_from_gerber(files["copper_top"], offset_px=3)
         isolation = out_dir / "isolation.nc"
+        depth_mm = settings.engraving_depth_mm
         write_path_nc(
             isolation,
             paths,
             settings=settings,
             operation="Isolation Engraving",
             tool_number=settings.tool_number,
-            depth_mm=settings.engraving_depth_mm,
+            depth_mm=depth_mm,
             include_header=True,
-            step_down_mm=settings.step_down_mm,
+            step_down_mm=max(float(settings.step_down_mm or depth_mm), float(depth_mm)),
         )
         produced.append("isolation.nc")
 
@@ -797,15 +798,18 @@ def _emit_copper_nc(
     if mirror_bounds is not None:
         paths = _mirror_paths(paths, mirror_bounds)
         operation = f"{operation} (mirror X)"
+    depth_mm = op.depth_mm or settings.engraving_depth_mm
+    # Single Z pass for copper: step-down at least the full engrave depth.
+    step_down = max(float(copper_settings.step_down_mm or depth_mm), float(depth_mm))
     write_path_nc(
         out_dir / filename,
         paths,
         settings=copper_settings,
         operation=operation,
         tool_number=op.tool_number,
-        depth_mm=op.depth_mm or settings.engraving_depth_mm,
+        depth_mm=depth_mm,
         include_header=True,
-        step_down_mm=copper_settings.step_down_mm,
+        step_down_mm=step_down,
     )
     return filename
 
