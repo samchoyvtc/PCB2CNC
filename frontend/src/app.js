@@ -135,7 +135,7 @@ function resetJob() {
   generateMountedFor = null;
   lastConvert = null;
   fileInput.value = "";
-  fileListEl.innerHTML = "";
+  renderFiles([]);
   layerTogglesEl.innerHTML = "";
   downloadsEl.innerHTML = "";
   clearGcodeInspect();
@@ -184,7 +184,7 @@ function showPanel(tab) {
   document.body.classList.toggle("view-convert", isConvert);
   document.body.classList.toggle("view-preview", !isMachine);
 
-  panelInput.hidden = isMachine || isConvert;
+  panelInput.hidden = true;
   panelPreview.hidden = isMachine;
   panelLayers.hidden = true;
   panelMachineWrap.hidden = !isMachine;
@@ -318,6 +318,14 @@ function generatePreviewCtx() {
     hideProgressSoon,
     onSelectLayer: showSelectedGerber,
     onMirrorChange: (on) => board.setMirrorX(on),
+    clearPathPreviews: () => {
+      panelGenerateWrap._overlays = {};
+      paintGenerateOverlays();
+      requestAnimationFrame(() => {
+        board.resize();
+        board.draw();
+      });
+    },
     onPathPreview: (result, op, visible = true) => {
       if (!panelGenerateWrap._overlays) panelGenerateWrap._overlays = {};
       if (visible) panelGenerateWrap._overlays[op] = result.paths || [];
@@ -355,11 +363,13 @@ async function refreshGenerateForm() {
 
 function renderFiles(files) {
   fileListEl.innerHTML = "";
+  const wrap = document.getElementById("preview-files");
   for (const f of files) {
-    const li = document.createElement("li");
-    li.innerHTML = `<span>${f.name}</span><span class="kind">${f.kind}</span>`;
-    fileListEl.append(li);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${f.name}</td><td class="kind">${f.kind}</td>`;
+    fileListEl.append(tr);
   }
+  if (wrap) wrap.hidden = !files.length;
 }
 
 function sleep(ms) {

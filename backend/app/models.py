@@ -99,7 +99,7 @@ class UploadResponse(BaseModel):
 class CopperOp(BaseModel):
     layer: str
     tool_number: int = 2
-    isolation_passes: int = Field(1, ge=1, le=12)
+    isolation_passes: int = Field(3, ge=1, le=12)
     engrave_mode: Literal["contour", "pocket"] = "contour"
     outline_layer: Optional[str] = None
     depth_mm: Optional[float] = Field(default=None, gt=0, le=5)

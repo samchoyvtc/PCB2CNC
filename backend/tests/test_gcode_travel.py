@@ -15,6 +15,8 @@ from app.services.postprocess import (
     _order_contours_nearest,
     _order_hits_nearest,
     _rotate_closed_start,
+    ensure_program_end,
+    merge_nc_files,
     write_drill_nc,
     write_drill_nc_grouped,
     write_path_nc,
@@ -141,3 +143,75 @@ def test_write_drill_grouped_orders_and_retracts(tmp_path: Path):
     # No per-hole Safe Z before the final group lift
     mid = text.split("G1 Z-1.6000", 1)[1].split("G1 Z-1.6000", 1)[0]
     assert "G0 Z15.000" not in mid
+
+
+def test_downloaded_nc_returns_tool_then_homes(tmp_path: Path):
+    settings = MachineSettings(safe_z_mm=15.0, retract_z_mm=3.0)
+    square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+    nc = tmp_path / "iso.nc"
+    write_path_nc(
+        nc,
+        [square],
+        settings=settings,
+        operation="Isolation Engraving",
+        tool_number=2,
+        depth_mm=0.15,
+        step_down_mm=0.15,
+    )
+    text = nc.read_text()
+    assert "; Return Tool" in text
+    assert "T0 M6" in text
+    assert "; Home position" in text
+    assert re.search(r"^G28\s*$", text, re.M)
+    assert text.strip().endswith("M2")
+    assert text.rfind("T0 M6") < text.rfind("G28")
+    assert text.rfind("G28") < text.rfind("M2")
+
+
+def test_ensure_program_end_patches_legacy_file(tmp_path: Path):
+    nc = tmp_path / "old.nc"
+    nc.write_text("%\n; Clearance height: 12 mm\nG90 G21\nT2 M6\nG1 X1 Y1\nM5\nM2\n")
+    settings = MachineSettings(safe_z_mm=15.0)
+    ensure_program_end(nc, settings)
+    text = nc.read_text()
+    assert "; Return Tool" in text
+    assert "T0 M6" in text
+    assert "; Home position" in text
+    assert re.search(r"^G28\s*$", text, re.M)
+    assert "G0 Z12.000" in text
+    assert text.strip().endswith("M2")
+    ensure_program_end(nc, settings)
+    assert nc.read_text().count("; Return Tool") == 1
+
+
+def test_merged_nc_returns_tool_once(tmp_path: Path):
+    settings = MachineSettings(safe_z_mm=15.0, retract_z_mm=3.0)
+    square = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (0.0, 0.0)]
+    a = tmp_path / "isolation.nc"
+    b = tmp_path / "outline.nc"
+    write_path_nc(
+        a,
+        [square],
+        settings=settings,
+        operation="Isolation Engraving",
+        tool_number=2,
+        depth_mm=0.15,
+        step_down_mm=0.15,
+    )
+    write_path_nc(
+        b,
+        [square],
+        settings=settings,
+        operation="Board Outline (outside)",
+        tool_number=4,
+        depth_mm=1.6,
+        step_down_mm=0.4,
+        close_open_paths=False,
+    )
+    dest = tmp_path / "all.nc"
+    merge_nc_files([a, b], dest, settings=settings)
+    text = dest.read_text()
+    assert text.count("; Return Tool") == 1
+    assert text.count("; Home position") == 1
+    assert text.rfind("T0 M6") < text.rfind("G28")
+    assert text.strip().endswith("M2")

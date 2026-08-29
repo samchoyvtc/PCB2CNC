@@ -61,7 +61,7 @@ export async function fetchNcText(jobId, name) {
   return res.text();
 }
 
-const SKIP_TITLE = /^(material:|board:|drill depth:|clearance height:|retract height:|combined |merged |coolant)/i;
+const SKIP_TITLE = /^(material:|board:|drill depth:|clearance height:|retract height:|combined |merged |coolant|return tool|home position)/i;
 
 function jobFromPart(fileName, title, hole) {
   const name = String(fileName || "").toLowerCase();
@@ -159,12 +159,14 @@ export function parseNcJobSequence(text) {
     }
     const toolMatch = line.match(/^T(\d+)\s*M6\b/i);
     if (!toolMatch) continue;
+    const tool = Number(toolMatch[1]);
+    if (tool === 0) continue;
     const { job, detail } = jobFromPart(currentFile, title, hole);
     rows.push({
       step: rows.length + 1,
       job,
       detail,
-      tool: Number(toolMatch[1]),
+      tool,
       file: currentFile,
     });
     hole = null;

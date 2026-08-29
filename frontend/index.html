@@ -172,7 +172,7 @@
       grid-template-rows: auto auto 1fr;
     }
     body.view-generate main {
-      grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr) minmax(20rem, 32.5rem);
+      grid-template-columns: minmax(0, 1fr) minmax(20rem, 32.5rem);
       align-items: stretch;
       overflow: hidden;
       min-height: 0;
@@ -193,15 +193,11 @@
     body.view-machine #panel-input,
     body.view-machine #panel-preview,
     body.view-machine #panel-layers,
+    body.view-generate #panel-input,
     body.view-generate #panel-layers,
     body.view-convert #panel-input,
     body.view-convert #panel-layers {
       display: none !important;
-    }
-    body.view-generate #panel-input {
-      display: flex !important;
-      height: 100%;
-      min-height: 0;
     }
     body.view-generate #panel-preview {
       display: flex !important;
@@ -226,6 +222,7 @@
     body.view-generate #panel-generate-wrap {
       display: flex;
       flex-direction: column;
+      gap: 0.75rem;
       max-width: none;
       width: 100%;
       margin: 0;
@@ -288,7 +285,6 @@
         height: auto;
         overflow: visible;
       }
-      body.view-generate #panel-input,
       body.view-generate #panel-generate-wrap {
         height: auto;
         overflow: visible;
@@ -477,20 +473,21 @@
     #dropzone {
       border: 1.5px dashed #3b4b6b;
       border-radius: 12px;
-      padding: 1.5rem 1rem;
+      padding: 0.85rem 1rem;
       text-align: center;
       background:
         linear-gradient(180deg, rgba(56, 189, 248, 0.06), transparent),
         var(--bg2);
       cursor: pointer;
       transition: border-color 0.15s, transform 0.15s;
+      flex: 0 0 auto;
     }
     #dropzone.dragover {
       border-color: var(--accent);
       transform: translateY(-1px);
     }
-    #dropzone strong { color: var(--accent); display: block; margin-bottom: 0.35rem; }
-    #dropzone span { color: var(--muted); font-size: 0.85rem; }
+    #dropzone strong { color: var(--accent); display: block; margin-bottom: 0.2rem; }
+    #dropzone span { color: var(--muted); font-size: 0.8rem; }
     .input-actions {
       margin-top: 0.65rem;
       display: flex;
@@ -504,25 +501,55 @@
       flex-direction: column;
       overflow: hidden;
     }
-    #file-list {
-      list-style: none;
-      margin: 0.9rem 0 0;
-      padding: 0;
-      flex: 1;
+    .preview-files {
+      flex: 0 1 auto;
+      max-height: 9.5rem;
       min-height: 0;
       overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(7, 11, 20, 0.45);
+    }
+    .preview-files[hidden] {
+      display: none !important;
+    }
+    body.view-convert .preview-files {
+      display: none !important;
+    }
+    .file-table {
+      width: 100%;
+      border-collapse: collapse;
       font-family: "JetBrains Mono", monospace;
       font-size: 0.72rem;
     }
-    #file-list li {
-      display: flex;
-      justify-content: space-between;
-      gap: 0.5rem;
-      padding: 0.35rem 0;
+    .file-table th,
+    .file-table td {
+      padding: 0.32rem 0.65rem;
+      text-align: left;
       border-bottom: 1px solid rgba(42, 54, 80, 0.7);
+    }
+    .file-table th {
+      position: sticky;
+      top: 0;
+      background: #121a2b;
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .file-table td {
       color: var(--muted);
     }
-    #file-list .kind { color: var(--accent2); }
+    .file-table td.kind {
+      color: var(--accent2);
+      text-align: right;
+      white-space: nowrap;
+      width: 1%;
+    }
+    .file-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
     .status {
       margin-top: 0.75rem;
       font-size: 0.85rem;
@@ -1351,17 +1378,10 @@
     </div>
   </div>
   <main>
-    <aside class="panel" id="panel-input">
-      <h2>Input</h2>
-      <div id="dropzone" tabindex="0" role="button" aria-label="Upload Gerber zip">
-        <strong>Drop CAM zip here</strong>
-        <span>or click to choose · Gerber + Excellon</span>
-        <input id="file-input" type="file" accept=".zip,application/zip" hidden />
-      </div>
+    <aside class="panel" id="panel-input" hidden>
       <div class="input-actions">
         <button type="button" id="btn-reset" disabled title="Clear current job and upload another zip">Reset</button>
       </div>
-      <ul id="file-list"></ul>
     </aside>
 
     <section class="panel viewer-wrap" id="panel-preview">
@@ -1377,6 +1397,17 @@
       </div>
       <div id="canvas-host">
         <canvas id="board-canvas"></canvas>
+      </div>
+      <div class="preview-files" id="preview-files" hidden>
+        <table class="file-table">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Kind</th>
+            </tr>
+          </thead>
+          <tbody id="file-list"></tbody>
+        </table>
       </div>
     </section>
 
@@ -1464,6 +1495,11 @@
     </aside>
 
     <aside class="panel" id="panel-generate-wrap">
+      <div id="dropzone" tabindex="0" role="button" aria-label="Upload Gerber zip">
+        <strong>Drop CAM zip here</strong>
+        <span>or click to choose · Gerber + Excellon</span>
+        <input id="file-input" type="file" accept=".zip,application/zip" hidden />
+      </div>
       <div id="panel-generate">
         <h2>Generate CNC path</h2>
         <p class="gen-lede">Classroom defaults are in <button type="button" class="linkish" id="btn-open-machine">Board setting</button>. Here, pick the copper side, drill files, and holding tabs.</p>
@@ -1505,7 +1541,7 @@
           </div>
           <div class="field gen-copper-passes-wrap" id="gen-copper-passes-wrap">
             <label for="gen-copper-passes">Engraving passes</label>
-            <input id="gen-copper-passes" class="gen-copper-passes" type="number" min="1" max="12" step="1" value="1" />
+            <input id="gen-copper-passes" class="gen-copper-passes" type="number" min="1" max="12" step="1" value="3" />
           </div>
         </section>
 
@@ -1585,6 +1621,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js?v=student-version-10"></script>
+  <script type="module" src="/src/app.js?v=student-version-14"></script>
 </body>
 </html>

@@ -22,6 +22,7 @@ from app.models import (
     UploadResponse,
 )
 from app.services import preview, tool_library, toolpath, zip_ingest
+from app.services.postprocess import ensure_program_end
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -195,6 +196,7 @@ def download_nc(job_id: str, filename: str) -> FileResponse:
         path = toolpath.nc_file_path(job_id, filename)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ensure_program_end(path)
     return FileResponse(
         path,
         media_type="text/plain",

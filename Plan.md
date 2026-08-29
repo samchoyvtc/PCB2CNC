@@ -30,8 +30,8 @@ Backend still accepts tab offset if a client sends it. The student UI does not o
 ## Classroom workflow
 
 1. Start the app (`Start PCB2CNC.command` / `.bat`, or uvicorn on port 8000).
-2. Drop a CAM `.zip` (Gerber RS-274X + Excellon) on the **Input** column.
-3. **Generate** — Input stays on the left, CNC path preview (copper + drill + outline) in the middle, Generate settings on the right. Isolation, drilling, and outline use classroom defaults. Choose copper **bottom** to turn **Mirror** on (paths flip around the board center). Paths overlay on the canvas automatically.
+2. Drop a CAM `.zip` (Gerber RS-274X + Excellon) on **Drop CAM zip here** above Generate CNC path.
+3. **Generate** — zip drop sits above the settings. CNC path preview (copper + drill + outline) is on the left, with the uploaded file list under the board. Isolation, drilling, and outline use classroom defaults. Choose copper **bottom** to turn **Mirror** on (paths flip around the board center). Paths overlay on the canvas automatically.
 4. **Convert** — inspect mill order or G-code, download `all.nc` (and optional per-process files).
 
 Open **Board setting** from Generate only to change stock size, Safe Z / retract, or the tool library.
@@ -49,9 +49,9 @@ flowchart LR
 
 ## Stage 1 — Generate (preview + paths)
 
-Three columns: **Input** (left), **CNC path · copper + drill + outline** (middle), **Generate CNC path** (right).
+Two columns: **CNC path · copper + drill + outline** (left, file list under the board) and **Generate CNC path** (right, zip drop above the form).
 
-- Drag-drop a CAM `.zip` in Input.
+- Drag-drop a CAM `.zip` above Generate CNC path.
 - Classify layers (copper, profile, mask, silk, drill).
 - Canvas shows the board, then overlays isolation, drill, and outline automatically.
 - Overlay Excellon drill hits, then machine paths.
@@ -69,7 +69,7 @@ Feeds, spindle, step-over, and step-down come from each selected tool’s PCB ro
 ### 1 · Copper trace engraving
 
 - Isolation **contour** around copper, or **pocket** to clear unused copper inside the board outline.
-- Student fields: **Layer** (top or bottom), **Contour / Pocket**, and **Engraving passes** when Contour is selected (1–12).
+- Student fields: **Layer** (top or bottom), **Contour / Pocket**, and **Engraving passes** when Contour is selected (1–12, default 3).
 - Tool (default T2) and engraving depth (default `0.2 mm`) live in **Board setting**.
 - Changing Layer shows that Gerber on the canvas (profile stays on).
 
@@ -103,6 +103,7 @@ Feeds, spindle, step-over, and step-down come from each selected tool’s PCB ro
 - Layout: CNC path preview (~50%), mill-order / G-code inspect (~30%), file list (~20%).
 - Inspect switches between **Job list** and **G-code**. A tool change is its own mill-order step.
 - Download buttons are labeled **Download**.
+- Every downloaded `.nc` file ends with **Return Tool** (`T0 M6`) then **Home position** (`G28`) after the last cut, before `M2`. Merged `all.nc` does this once at the end of the whole job.
 - Hide rapids remains available.
 
 ## G-code travel (builtin postprocessor)

@@ -6,7 +6,7 @@ Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer pr
 
 ## Stages
 
-1. **Generate** — drag-drop zip on the left; CNC path (copper + drill + outline) in the middle; isolation, drill/pocket, and outline settings on the right; paths overlay automatically  
+1. **Generate** — drop a CAM zip above the settings; CNC path preview in the middle with the zip file list under the board; isolation, drill/pocket, and outline on the right; paths overlay automatically  
 2. **Convert** — write `.nc` files; mill-order table or G-code inspect; download  
 
 Board setting (stock size, copper tool and depths, Safe Clearance/Retract Height, tool library) is optional from a link on Generate. **Apply** saves and returns to Generate; **Cancel** discards edits and returns. Students on Generate pick **copper top or bottom**, **Contour or Pocket** (and engraving passes on contour), **Corn** mills for each hole size, the **profile** outline, and holding tabs. Outline cut uses the **largest Corn mill selected for drilling**. Changing Layer shows that Gerber on the canvas (profile stays on for the board shape). Choosing **bottom** turns **Mirror** on (off for top), which flips copper, drill, and outline left-to-right around the board center. Board-setting defaults: engraving `0.2 mm`, drilling and cutout `1.7 mm`. On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.

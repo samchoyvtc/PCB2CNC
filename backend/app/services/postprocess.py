@@ -39,6 +39,58 @@ def _coolant(settings: MachineSettings, on: bool) -> str:
     return "M8" if on else "M9"
 
 
+def _program_end(settings: MachineSettings) -> list[str]:
+    """Stop the spindle, return the tool, then home after the last cut."""
+    return [
+        f"G0 Z{settings.safe_z_mm:.3f}",
+        _coolant(settings, False),
+        "M5",
+        "; Return Tool",
+        "T0 M6",
+        "; Home position",
+        "G28",
+        "M2",
+    ]
+
+
+def _is_epilogue_line(line: str) -> bool:
+    s = line.strip()
+    u = s.upper()
+    if u in {"%", "M2", "M30", "T0 M6"}:
+        return True
+    if u.startswith("G28"):
+        return True
+    inner = re.sub(r"^;\s*", "", s, flags=re.I).strip().upper()
+    return inner in {"RETURN TOOL", "HOME POSITION"}
+
+
+def _has_return_and_home(text: str) -> bool:
+    return bool(
+        re.search(r"(?im)^;\s*Return Tool\s*$", text)
+        and re.search(r"(?im)^T0\s*M6\b", text)
+        and re.search(r"(?im)^;\s*Home position\s*$", text)
+        and re.search(r"(?im)^G28\b", text)
+    )
+
+
+def ensure_program_end(path: Path, settings: MachineSettings | None = None) -> None:
+    """Append Return Tool then Home if this NC file does not already include them."""
+    if not path.is_file():
+        return
+    text = path.read_text(errors="replace")
+    if _has_return_and_home(text):
+        return
+    settings = settings or MachineSettings()
+    height = re.search(r";\s*Clearance height:\s*([\d.]+)", text, re.I)
+    if height:
+        settings = settings.model_copy(update={"safe_z_mm": float(height.group(1))})
+    lines = text.splitlines()
+    while lines and (not lines[-1].strip() or _is_epilogue_line(lines[-1])):
+        lines.pop()
+    lines.extend(_program_end(settings))
+    path.write_text("\n".join(lines) + "\n")
+
+
 def _xy_dist(
     a: tuple[float, float] | None,
     b: tuple[float, float] | None,
@@ -211,11 +263,7 @@ def write_path_nc(
                 last_xy = (contour[-1][0], contour[-1][1])
             lines.append(f"G0 Z{retract:.3f}")
 
-    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
-    lines.append(_coolant(settings, False))
-    lines.append("M5")
-    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
-    lines.append("M2")
+    lines.extend(_program_end(settings))
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -254,10 +302,7 @@ def write_drill_nc(
         lines.append(f"G0 Z{retract:.3f}")
         last_xy = target
 
-    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
-    lines.append(_coolant(settings, False))
-    lines.append("M5")
-    lines.append("M2")
+    lines.extend(_program_end(settings))
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -366,8 +411,7 @@ def write_drill_nc_grouped(
         lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
         lines.append(_coolant(tool_settings, False))
         lines.append("M5")
-    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
-    lines.append("M2")
+    lines.extend(_program_end(settings))
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -378,7 +422,7 @@ _HOLE_COMMENT = re.compile(
 _TOOL_CHANGE = re.compile(r"^T(\d+)\s*M6\b", re.I)
 _SKIP_TITLE = re.compile(
     r"^(material:|board:|drill depth:|clearance height:|retract height:"
-    r"|combined |merged |coolant)",
+    r"|combined |merged |coolant|return tool|home position)",
     re.I,
 )
 
@@ -449,6 +493,8 @@ def nc_job_sequence(text: str, file_name: str = "") -> list[dict]:
         if not tool_match:
             continue
         tool = int(tool_match.group(1))
+        if tool == 0:
+            continue
         job, detail = _job_from_part(current_file, title, hole)
         rows.append(
             {
@@ -527,11 +573,11 @@ def merge_nc_files(
         if not part.exists():
             continue
         body = part.read_text(errors="replace").splitlines()
-        # Strip program start/end from parts
+        # Strip program start/end from parts so Return Tool / Home run once.
         filtered = []
         for line in body:
             s = line.strip().upper()
-            if s in {"%", "M2", "M30"}:
+            if _is_epilogue_line(line):
                 continue
             if s.startswith("G90") or s.startswith("G21") or s.startswith("G17"):
                 continue
@@ -540,8 +586,5 @@ def merge_nc_files(
         lines.extend(filtered)
         lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
         lines.append(f"; End {part.name}")
-    lines.append("M5")
-    lines.append(_coolant(settings, False))
-    lines.append(f"G0 Z{settings.safe_z_mm:.3f}")
-    lines.append("M2")
+    lines.extend(_program_end(settings))
     dest.write_text("\n".join(lines) + "\n")

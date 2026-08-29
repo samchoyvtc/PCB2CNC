@@ -111,6 +111,7 @@ def main() -> int:
                 BIND,
                 "--port",
                 str(PORT),
+                "--reload",
             ],
             cwd=str(BACKEND),
             env=env,

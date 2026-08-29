@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw
 from app.models import GeneratePlan, MachineSettings
 from app.services import parser, tool_library, zip_ingest
 from app.services.postprocess import (
+    ensure_program_end,
     merge_nc_files,
     write_drill_nc,
     write_drill_nc_grouped,
@@ -1001,6 +1002,11 @@ def generate_toolpaths(
                 engine = "builtin"
             else:
                 raise
+
+    for name in produced:
+        dest = out_dir / name
+        if dest.exists():
+            ensure_program_end(dest, settings)
 
     preview_b64 = render_toolpath_preview(job_id)
     return {

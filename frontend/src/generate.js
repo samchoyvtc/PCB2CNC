@@ -327,7 +327,7 @@ function copperMode(card) {
 
 function copperPasses(card) {
   const passes = Number(card?.querySelector(".gen-copper-passes")?.value);
-  return Number.isFinite(passes) && passes >= 1 ? Math.min(12, Math.round(passes)) : 1;
+  return Number.isFinite(passes) && passes >= 1 ? Math.min(12, Math.round(passes)) : 3;
 }
 
 function syncCopperModeUi(card) {
@@ -520,11 +520,42 @@ function finishPathProgress(ctx, ok, label = "CNC paths previewed") {
   }
 }
 
+function previewGen(root) {
+  return root._previewGen || 0;
+}
+
+function clearAllPreviews(root) {
+  root._previewGen = previewGen(root) + 1;
+  stopPathPulse(root);
+  const ctx = root._previewCtx || {};
+  ctx.setProgress?.(false);
+  ctx.clearPathPreviews?.();
+  root.querySelectorAll(".gen-preview-btn").forEach((btn) => {
+    const card = btn.closest(".gen-card");
+    setPreviewPressed(btn, card, false);
+    btn.disabled = false;
+    if (!ctx.clearPathPreviews) {
+      ctx.onPathPreview?.({ paths: [] }, previewKey(card, btn.dataset.op), false);
+    }
+  });
+}
+
+function scheduleRebuildPreviews(root) {
+  window.clearTimeout(root._previewRefreshTimer);
+  clearAllPreviews(root);
+  const ctx = root._previewCtx || {};
+  ctx.setStatus?.("Updating CNC path preview…");
+  root._previewRefreshTimer = window.setTimeout(() => {
+    void autoPreviewAll(root, { alreadyCleared: true });
+  }, 250);
+}
+
 async function showCardPreview(root, btn, { trackProgress = true } = {}) {
   const card = btn.closest(".gen-card");
   const ctx = root._previewCtx || {};
   const kind = btn.dataset.op;
   const key = previewKey(card, kind);
+  const gen = previewGen(root);
   const jobId = ctx.getJobId?.();
   const settings = ctx.getSettings?.();
   const plan = planForCard(root, kind, card);
@@ -550,19 +581,21 @@ async function showCardPreview(root, btn, { trackProgress = true } = {}) {
   const stop = trackProgress ? pulsePathProgress(root, ctx, 8, 100, label) : null;
   try {
     const result = await previewPath(jobId, settings, plan);
+    if (previewGen(root) !== gen) return;
     setPreviewPressed(btn, card, true);
     ctx.onPathPreview?.(result, key, true);
     ctx.setStatus?.(result.message || "Path preview on", "ok");
     stop?.(100, label);
     if (trackProgress) finishPathProgress(ctx, true, result.message || "Path preview on");
   } catch (err) {
+    if (previewGen(root) !== gen) return;
     setPreviewPressed(btn, card, false);
     ctx.onPathPreview?.({ paths: [] }, key, false);
     ctx.setStatus?.(err.message || String(err), "error");
     stop?.(0, label);
     if (trackProgress) finishPathProgress(ctx, false);
   } finally {
-    btn.disabled = false;
+    if (previewGen(root) === gen) btn.disabled = false;
   }
 }
 
@@ -577,20 +610,24 @@ function hideCardPreview(root, btn) {
 
 async function runPreviewBatch(root, buttons) {
   const ctx = root._previewCtx || {};
+  const gen = previewGen(root);
   const n = buttons.length;
   if (!n) return;
   let failed = false;
   for (let i = 0; i < n; i++) {
+    if (previewGen(root) !== gen) return;
     const from = (i / n) * 100;
     const to = ((i + 1) / n) * 100;
     const kind = buttons[i].dataset.op;
     const label = `${previewProgressLabel(kind)} (${i + 1}/${n})`;
     const stop = pulsePathProgress(root, ctx, from, to, label);
     await showCardPreview(root, buttons[i], { trackProgress: false });
+    if (previewGen(root) !== gen) return;
     const on = buttons[i].getAttribute("aria-pressed") === "true";
     if (!on) failed = true;
     stop(to, label);
   }
+  if (previewGen(root) !== gen) return;
   if (failed) finishPathProgress(ctx, false);
   else {
     ctx.setStatus?.("CNC paths previewed. Press Next step · Convert when ready.", "ok");
@@ -598,15 +635,33 @@ async function runPreviewBatch(root, buttons) {
   }
 }
 
-function refreshActivePreviews(root) {
-  const active = [...root.querySelectorAll('.gen-preview-btn[aria-pressed="true"]')];
-  return runPreviewBatch(root, active);
+function isPlanPreviewControl(target) {
+  if (!target || target.closest(".gen-preview-btn")) return false;
+  if (target.id === "gen-mirror") return true;
+  return !!target.closest(".gen-card");
 }
 
 function bindPreviewClicks(root) {
   if (root.dataset.previewBound) return;
   root.dataset.previewBound = "1";
-  let refreshTimer = 0;
+  const onPlanChange = (event) => {
+    const target = event.target;
+    if (!isPlanPreviewControl(target)) return;
+    if (target.classList.contains("gen-copper-mode")) {
+      syncCopperModeUi(target.closest(".gen-copper"));
+    }
+    if (target.classList.contains("gen-size-tool") || target.name === "drill-layer") {
+      syncOutlineFromDrills(root);
+    }
+    if (target.classList.contains("gen-copper-layer")) {
+      root._previewCtx?.onSelectLayer?.(target.value);
+      syncMirrorToCopperLayer(root, target);
+    }
+    scheduleRebuildPreviews(root);
+    if (target.id === "gen-mirror" || target.classList.contains("gen-copper-layer")) {
+      root._previewCtx?.onMirrorChange?.(!!root.querySelector("#gen-mirror")?.checked);
+    }
+  };
   root.addEventListener("click", async (event) => {
     const btn = event.target.closest(".gen-preview-btn");
     if (!btn || !root.contains(btn)) return;
@@ -614,67 +669,22 @@ function bindPreviewClicks(root) {
     if (on) hideCardPreview(root, btn);
     else await showCardPreview(root, btn);
   });
-  root.addEventListener("change", (event) => {
-    if (event.target?.id === "gen-mirror") {
-      root._previewCtx?.onMirrorChange?.(event.target.checked);
-      window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        void refreshActivePreviews(root);
-      }, 250);
-      return;
-    }
-    if (event.target?.classList.contains("gen-copper-mode")) {
-      syncCopperModeUi(event.target.closest(".gen-copper"));
-    }
-    if (event.target?.classList.contains("gen-copper-layer")) {
-      root._previewCtx?.onSelectLayer?.(event.target.value);
-      if (syncMirrorToCopperLayer(root, event.target)) {
-        const mirrorOn = !!root.querySelector("#gen-mirror")?.checked;
-        root._previewCtx?.onMirrorChange?.(mirrorOn);
-        window.clearTimeout(refreshTimer);
-        refreshTimer = window.setTimeout(() => {
-          void refreshActivePreviews(root);
-        }, 250);
-        return;
-      }
-    }
-    if (event.target?.classList.contains("gen-size-tool")) {
-      syncOutlineFromDrills(root);
-    }
-    const card = event.target.closest(".gen-card");
-    const btn = card?.querySelector(".gen-preview-btn");
-    if (!btn || btn.getAttribute("aria-pressed") !== "true") {
-      if (event.target?.classList.contains("gen-size-tool")) {
-        const outlineBtn = root.querySelector('.gen-outline .gen-preview-btn[aria-pressed="true"]');
-        if (outlineBtn) {
-          window.clearTimeout(refreshTimer);
-          refreshTimer = window.setTimeout(() => showCardPreview(root, outlineBtn), 250);
-        }
-      }
-      return;
-    }
-    window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => {
-      if (event.target?.classList.contains("gen-size-tool")) {
-        const outlineBtn = root.querySelector(".gen-outline .gen-preview-btn");
-        const btns = [btn];
-        if (outlineBtn?.getAttribute("aria-pressed") === "true" && outlineBtn !== btn) {
-          btns.push(outlineBtn);
-        }
-        void runPreviewBatch(root, btns);
-        return;
-      }
-      showCardPreview(root, btn);
-    }, 250);
+  root.addEventListener("change", onPlanChange);
+  root.addEventListener("input", (event) => {
+    const target = event.target;
+    if (target?.type !== "number" || !target.closest(".gen-card")) return;
+    onPlanChange(event);
   });
 }
 
-export async function autoPreviewAll(root) {
+export async function autoPreviewAll(root, { alreadyCleared = false } = {}) {
+  if (!root) return;
+  if (!alreadyCleared) clearAllPreviews(root);
   const buttons = [...root.querySelectorAll(".gen-preview-btn")];
   await runPreviewBatch(root, buttons);
 }
 
-export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, setProgress, hideProgressSoon, onPathPreview, onSelectLayer, onMirrorChange } = {}) {
+export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, setProgress, hideProgressSoon, onPathPreview, onSelectLayer, onMirrorChange, clearPathPreviews } = {}) {
   if (!root) return;
   const copperCard = root.querySelector(".gen-copper-top") || root.querySelector(".gen-copper");
   const outlineLayer = root.querySelector("#gen-outline-layer");
@@ -689,7 +699,7 @@ export function mountGenerateForm(root, { preview, tools, getJobId, getSettings,
   const profiles = profileChoiceLayers(preview);
   const outlineDefault = profiles[0] || null;
 
-  root._previewCtx = { getJobId, getSettings, setStatus, setProgress, hideProgressSoon, onPathPreview, onSelectLayer, onMirrorChange };
+  root._previewCtx = { getJobId, getSettings, setStatus, setProgress, hideProgressSoon, onPathPreview, onSelectLayer, onMirrorChange, clearPathPreviews };
   bindPreviewClicks(root);
   root.querySelectorAll(".gen-preview-btn").forEach((btn) => {
     setPreviewPressed(btn, btn.closest(".gen-card"), false);
