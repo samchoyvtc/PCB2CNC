@@ -1,17 +1,15 @@
 # Gerber CNC GUI
 
-**Version 0.4.3** — One copper side per job (top or bottom), pocket bounded by the board profile, Generate Layer switches the canvas Gerber; G-code travel optimizations (retract between hops, nearest-neighbor order, single-pass copper).
+**Version 0.4.3-student** — Trimmed classroom workflow: Generate (zip + CNC path) → Convert. Copper contour or pocket; drill vs pocket is per hole size.
 
 Local web app that turns a PCB CAM zip (Gerber + Excellon) into colored layer previews and downloadable CNC `.nc` files.
 
 ## Stages
 
-1. **Preview** — drag-drop zip, colored Gerber layers, drill overlay, board size ruler  
-2. **Board setting** — stock size, copper/drill depths, clearance and retract heights; pick a PAEN tool  
-3. **Generate** — copper (contour or pocket), drill (plunge or pocket), and outline with holding tabs; overlay paths on the board  
-4. **Convert** — write `.nc` files; mill-order table or G-code inspect; download  
+1. **Generate** — drag-drop zip on the left; CNC path (copper + drill + outline) in the middle; isolation, drill/pocket, and outline settings on the right; paths overlay automatically  
+2. **Convert** — write `.nc` files; mill-order table or G-code inspect; download  
 
-On Generate, **Layer** in copper engraving can be `copper_top` or `copper_bottom` (one side per job). Changing Layer shows that Gerber on the canvas (profile stays on for the board shape). **Pocket** always mills inside the profile / board-outline Gerber. **Mirror** (off by default) flips copper, drill, and outline left-to-right around the board center. On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.
+Board setting (stock size, copper tool and depths, Safe Clearance/Retract Height, tool library) is optional from a link on Generate. **Apply** saves and returns to Generate; **Cancel** discards edits and returns. Students on Generate pick **copper top or bottom**, **Contour or Pocket** (and engraving passes on contour), **Corn** mills for each hole size, the **profile** outline, and holding tabs. Outline cut uses the **largest Corn mill selected for drilling**. Changing Layer shows that Gerber on the canvas (profile stays on for the board shape). Choosing **bottom** turns **Mirror** on (off for top), which flips copper, drill, and outline left-to-right around the board center. Board-setting defaults: engraving `0.2 mm`, drilling and cutout `1.7 mm`. On Generate and Convert, **Hide rapids** (on by default) hides G0 travel so only cuts and plunges show.
 
 ## Quick start
 

@@ -108,6 +108,19 @@
     .next-step:not(:disabled):hover {
       filter: brightness(1.05);
     }
+    .linkish {
+      appearance: none;
+      border: 0;
+      background: none;
+      padding: 0;
+      font: inherit;
+      font-size: inherit;
+      font-weight: 600;
+      color: var(--accent2);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 0.15em;
+    }
     #btn-reset-header {
       appearance: none;
       border: 1px solid var(--line);
@@ -154,16 +167,16 @@
       grid-template-columns: 1fr;
     }
     body.view-generate {
-      grid-template-rows: auto auto auto;
-      height: auto;
-      overflow: auto;
+      height: 100vh;
+      overflow: hidden;
+      grid-template-rows: auto auto 1fr;
     }
     body.view-generate main {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 32.5rem);
-      align-items: start;
-      overflow: visible;
-      min-height: calc(100vh - 8.75rem);
-      height: auto;
+      grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr) minmax(20rem, 32.5rem);
+      align-items: stretch;
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
     }
     body.view-convert {
       height: 100vh;
@@ -180,19 +193,21 @@
     body.view-machine #panel-input,
     body.view-machine #panel-preview,
     body.view-machine #panel-layers,
-    body.view-generate #panel-input,
     body.view-generate #panel-layers,
     body.view-convert #panel-input,
     body.view-convert #panel-layers {
       display: none !important;
     }
+    body.view-generate #panel-input {
+      display: flex !important;
+      height: 100%;
+      min-height: 0;
+    }
     body.view-generate #panel-preview {
       display: flex !important;
-      position: sticky;
-      top: 1rem;
-      align-self: start;
-      height: calc(100vh - 8.75rem);
-      max-height: calc(100vh - 8.75rem);
+      position: static;
+      height: 100%;
+      max-height: none;
       min-height: 0;
     }
     body.view-convert #panel-preview {
@@ -209,13 +224,22 @@
       margin: 0 auto;
     }
     body.view-generate #panel-generate-wrap {
-      display: block;
+      display: flex;
+      flex-direction: column;
       max-width: none;
       width: 100%;
       margin: 0;
-      height: auto;
+      height: 100%;
       max-height: none;
-      overflow: visible;
+      min-height: 0;
+      overflow: hidden;
+    }
+    body.view-generate #panel-generate {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
     }
     body.view-convert #panel-jobs-wrap,
     body.view-convert #panel-convert-wrap {
@@ -255,17 +279,27 @@
     }
     @media (max-width: 1200px) {
       main { grid-template-columns: 1fr; }
+      body.view-generate {
+        height: auto;
+        overflow: auto;
+      }
       body.view-generate main {
         grid-template-columns: 1fr;
+        height: auto;
+        overflow: visible;
+      }
+      body.view-generate #panel-input,
+      body.view-generate #panel-generate-wrap {
+        height: auto;
+        overflow: visible;
       }
       body.view-generate #panel-preview {
         position: static;
         height: min(70vh, 36rem);
         max-height: min(70vh, 36rem);
-        order: -1;
       }
-      body.view-generate #panel-generate-wrap {
-        order: 0;
+      body.view-generate #panel-generate {
+        overflow: visible;
       }
       body.view-convert {
         height: auto;
@@ -410,6 +444,18 @@
       gap: 1.25rem;
       align-items: start;
     }
+    .board-setting-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.65rem;
+      margin-top: 1.35rem;
+      padding: 1rem 0 0.1rem;
+      border-top: 1px solid var(--line);
+      position: sticky;
+      bottom: 0;
+      background: var(--panel);
+      z-index: 2;
+    }
     @media (max-width: 800px) {
       .machine-grid { grid-template-columns: 1fr; }
     }
@@ -489,6 +535,9 @@
       margin-top: 0.75rem;
       display: grid;
       gap: 0.35rem;
+    }
+    .progress-wrap[hidden] {
+      display: none !important;
     }
     .progress-label {
       font-size: 0.8rem;
@@ -870,45 +919,6 @@
       width: auto;
       justify-self: end;
     }
-    .safe-pos {
-      margin: 0.15rem 0 0.2rem;
-    }
-    .safe-pos-label {
-      display: block;
-      padding: 0.48rem 0.7rem;
-      border-radius: 8px;
-      background: #3a3a3c;
-      color: #f3f3f3;
-      font-size: 0.88rem;
-      font-weight: 600;
-      user-select: none;
-    }
-    .safe-pos-row {
-      display: grid;
-      grid-template-columns: minmax(7.2rem, 1fr) 6.6rem auto;
-      align-items: center;
-      gap: 0.55rem;
-      margin: 0.7rem 0 0;
-    }
-    .safe-pos-row label {
-      text-align: right;
-      font-size: 0.82rem;
-      color: var(--text);
-    }
-    .safe-pos-row input {
-      width: 100%;
-      border-radius: 6px;
-      border: 1px solid #5a5a5e;
-      background: #1c1c1e;
-      color: var(--text);
-      padding: 0.38rem 0.5rem;
-      font: inherit;
-      font-variant-numeric: tabular-nums;
-    }
-    .safe-pos-row .unit {
-      color: var(--text);
-      font-size: 0.82rem;
-    }
     .field input,
     .field select {
       width: 100%;
@@ -918,6 +928,23 @@
       color: var(--text);
       padding: 0.5rem 0.65rem;
       font: inherit;
+    }
+    .field select:disabled,
+    .field input[readonly] {
+      opacity: 0.85;
+      cursor: default;
+      color: var(--muted);
+    }
+    .setting-group {
+      margin: 0.85rem 0 0.45rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+    .setting-group:first-of-type {
+      margin-top: 0.2rem;
     }
     .gen-lede {
       margin: -0.25rem 0 1.1rem;
@@ -1296,18 +1323,18 @@
     }
   </style>
 </head>
-<body>
+<body class="view-generate">
   <header>
     <div class="brand">
       <h1>Gerber CNC</h1>
-      <p>Zip in → colored preview → G-code out</p>
+      <p>Student version · Zip in → CNC paths → G-code out</p>
     </div>
     <div class="header-actions">
       <div class="stages">
-        <span class="stage-pill active" id="pill-1" data-stage="1">1 Preview</span>
-        <span class="stage-pill" id="pill-2" data-stage="2">2 Machine</span>
-        <span class="stage-pill" id="pill-3" data-stage="3">3 Generate</span>
-        <span class="stage-pill" id="pill-4" data-stage="4">4 Convert</span>
+        <span class="stage-pill active" id="pill-1" data-stage="1">1 Generate</span>
+        <span class="stage-pill" id="pill-2" data-stage="2" hidden>2 Machine</span>
+        <span class="stage-pill" id="pill-3" data-stage="3" hidden>2 Generate</span>
+        <span class="stage-pill" id="pill-4" data-stage="4">2 Convert</span>
       </div>
       <button type="button" id="btn-reset-header" disabled title="Clear current job and upload another zip">Reset</button>
       <button type="button" class="next-step" id="btn-next" disabled>Next step</button>
@@ -1338,7 +1365,7 @@
     </aside>
 
     <section class="panel viewer-wrap" id="panel-preview">
-      <h2>Board preview</h2>
+      <h2>CNC path · copper + drill + outline</h2>
       <div class="viewer-toolbar">
         <button type="button" id="btn-fit">Fit</button>
         <button type="button" id="btn-zoom-in">Zoom +</button>
@@ -1353,7 +1380,7 @@
       </div>
     </section>
 
-    <aside class="panel" id="panel-layers">
+    <aside class="panel" id="panel-layers" hidden>
       <div class="tab-panel active" id="panel-layers-inner" role="tabpanel">
         <div id="layer-toggles"></div>
       </div>
@@ -1375,26 +1402,33 @@
                   <input id="board_length_mm" name="board_length_mm" type="number" step="0.1" value="150" />
                 </div>
               </div>
+              <p class="gen-hint">Keep these values here so students only pick the copper side, Corn mills, and holding tabs on Generate.</p>
+              <div class="setting-group">Copper engraving</div>
               <div class="field">
-                <label for="engraving_depth_mm">Copper engrave depth (mm)</label>
-                <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.15" />
+                <label for="copper_tool_number">Tool</label>
+                <select id="copper_tool_number" name="copper_tool_number"></select>
               </div>
               <div class="field">
-                <label for="drill_depth_mm">Drill depth (mm)</label>
-                <input id="drill_depth_mm" name="drill_depth_mm" type="number" step="0.01" value="1.6" />
+                <label for="engraving_depth_mm">Engraving depth (mm)</label>
+                <input id="engraving_depth_mm" name="engraving_depth_mm" type="number" step="0.01" value="0.2" />
               </div>
-              <div class="safe-pos">
-                <div class="safe-pos-label">Safe Position</div>
-                <div class="safe-pos-row">
-                  <label for="safe_z_mm">Clearance Height</label>
-                  <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.001" value="15.000" />
-                  <span class="unit">mm</span>
-                </div>
-                <div class="safe-pos-row">
-                  <label for="retract_z_mm">Retract Height</label>
-                  <input id="retract_z_mm" name="retract_z_mm" type="number" step="0.001" value="3.000" />
-                  <span class="unit">mm</span>
-                </div>
+              <div class="setting-group">Drilling and outline</div>
+              <div class="field">
+                <label for="drill_depth_mm">Drilling and cutout depth (mm)</label>
+                <input id="drill_depth_mm" name="drill_depth_mm" type="number" step="0.01" value="1.7" />
+              </div>
+              <div class="field">
+                <label for="outline_tool_number">Outline cut tool</label>
+                <select id="outline_tool_number" name="outline_tool_number" disabled></select>
+              </div>
+              <p class="gen-hint">Filled automatically with the largest Corn mill selected in PCB drilling.</p>
+              <div class="field">
+                <label for="safe_z_mm">Safe Clearance Height (mm)</label>
+                <input id="safe_z_mm" name="safe_z_mm" type="number" step="0.01" value="15" />
+              </div>
+              <div class="field">
+                <label for="retract_z_mm">Safe Retract Height (mm)</label>
+                <input id="retract_z_mm" name="retract_z_mm" type="number" step="0.01" value="3" />
               </div>
             </form>
           </div>
@@ -1422,13 +1456,17 @@
             </section>
           </div>
         </div>
+        <div class="board-setting-actions">
+          <button type="button" id="btn-settings-cancel">Cancel</button>
+          <button type="button" class="primary" id="btn-settings-apply">Apply</button>
+        </div>
       </div>
     </aside>
 
-    <aside class="panel" id="panel-generate-wrap" hidden>
+    <aside class="panel" id="panel-generate-wrap">
       <div id="panel-generate">
         <h2>Generate CNC path</h2>
-        <p class="gen-lede">Pick a layer and tool for each process. Feeds, spindle, and step-down come from that tool’s PCB row.</p>
+        <p class="gen-lede">Classroom defaults are in <button type="button" class="linkish" id="btn-open-machine">Board setting</button>. Here, pick the copper side, drill files, and holding tabs.</p>
 
         <div class="gen-mirror-row">
           <div>
@@ -1447,7 +1485,11 @@
               <button type="button" class="gen-preview-btn" data-op="copper" aria-pressed="false">Preview</button>
             </div>
           </div>
-          <p class="gen-hint gen-copper-hint" id="gen-copper-hint">Contour isolation around copper. Extra passes step farther out using the tool’s step-over.</p>
+          <p class="gen-hint gen-copper-hint" id="gen-copper-hint">Contour isolation around copper. Extra passes step farther out using the tool’s step-over. Tool and engraving depth are in Board setting.</p>
+          <div class="field">
+            <label for="gen-copper-layer">Layer</label>
+            <select id="gen-copper-layer" class="gen-copper-layer"></select>
+          </div>
           <div class="field">
             <label>Strategy</label>
             <div class="gen-seg" role="radiogroup" aria-label="Copper engraving strategy">
@@ -1461,24 +1503,8 @@
               </label>
             </div>
           </div>
-          <div class="field">
-            <label for="gen-copper-layer">Layer</label>
-            <select id="gen-copper-layer" class="gen-copper-layer"></select>
-          </div>
-          <div class="field gen-copper-outline-wrap" id="gen-copper-outline-wrap" hidden>
-            <label for="gen-copper-outline">Board outline</label>
-            <select id="gen-copper-outline" class="gen-copper-outline"></select>
-          </div>
-          <div class="field">
-            <label for="gen-copper-tool">Tool</label>
-            <select id="gen-copper-tool" class="gen-copper-tool"></select>
-          </div>
-          <div class="field">
-            <label for="gen-copper-depth">Engraving depth (mm)</label>
-            <input id="gen-copper-depth" class="gen-copper-depth" type="number" min="0.01" max="5" step="0.01" value="0.15" />
-          </div>
           <div class="field gen-copper-passes-wrap" id="gen-copper-passes-wrap">
-            <label for="gen-copper-passes">Isolation passes</label>
+            <label for="gen-copper-passes">Engraving passes</label>
             <input id="gen-copper-passes" class="gen-copper-passes" type="number" min="1" max="12" step="1" value="1" />
           </div>
         </section>
@@ -1492,20 +1518,12 @@
               <button type="button" class="gen-preview-btn" data-op="outline" aria-pressed="false">Preview</button>
             </div>
           </div>
-          <p class="gen-hint">Outside cut: the tool center is offset by the cutter radius so the edge follows the outline. Holding tabs keep the board in the stock. Use Tab offset to rotate them around the outline.</p>
-          <div class="field-row">
-            <div class="field">
-              <label for="gen-outline-layer">Outline layer</label>
-              <select id="gen-outline-layer"></select>
-            </div>
-            <div class="field">
-              <label for="gen-outline-tool">Tool</label>
-              <select id="gen-outline-tool"></select>
-            </div>
-          </div>
+          <p class="gen-hint">Outside cut: the tool center is offset by the cutter radius so the edge follows the outline. Holding tabs keep the board in the stock. Drilling and cutout depth is in Board setting.</p>
+          <p class="gen-hint" id="gen-outline-tool-hint">Cut uses the largest Corn mill selected for drilling.</p>
+          <input type="hidden" id="gen-outline-tool" value="4" />
           <div class="field">
-            <label for="gen-outline-depth">Cutout depth (mm)</label>
-            <input id="gen-outline-depth" type="number" min="0.01" max="20" step="0.01" value="1.6" />
+            <label for="gen-outline-layer">Profile layer</label>
+            <select id="gen-outline-layer"></select>
           </div>
           <div class="field-row">
             <div class="field">
@@ -1515,13 +1533,6 @@
             <div class="field">
               <label for="gen-tab-width">Tab width (mm)</label>
               <input id="gen-tab-width" type="number" min="0.2" max="20" step="0.1" value="2" />
-            </div>
-          </div>
-          <div class="field" id="gen-tab-offset-wrap">
-            <label for="gen-tab-offset">Tab offset</label>
-            <div class="gen-tab-offset-row">
-              <input id="gen-tab-offset" type="range" min="0" max="1" step="0.001" value="0" />
-              <output id="gen-tab-offset-readout" for="gen-tab-offset">0%</output>
             </div>
           </div>
         </section>
@@ -1574,6 +1585,6 @@
     </aside>
   </main>
 
-  <script type="module" src="/src/app.js?v=mirror-x-1"></script>
+  <script type="module" src="/src/app.js?v=student-version-10"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/** Stage 3 generate-plan form: copper, drills, outline + tabs. */
+/** Student generate-plan form: contour or pocket copper, drill/pocket per hole size, outline tabs. */
 
 import { previewPath } from "./output.js";
 import { drillToolColor } from "./preview.js";
@@ -19,21 +19,38 @@ function toolLabel(tool) {
   return Number.isFinite(n) ? `T${n}${name ? ` · ${name}` : ""}` : name || "Tool";
 }
 
-function gerberLayers(preview) {
-  return (preview?.layers || []).filter((layer) => layer.kind !== "drill" && layer.kind !== "bom");
+function copperChoiceLayers(preview) {
+  return (preview?.layers || []).filter(
+    (layer) => layer.kind === "copper_top" || layer.kind === "copper_bottom"
+  );
+}
+
+function profileChoiceLayers(preview) {
+  return (preview?.layers || []).filter((layer) => layer.kind === "profile");
 }
 
 function drillLayers(preview) {
   return (preview?.layers || []).filter((layer) => layer.kind === "drill");
 }
 
-function defaultLayer(layers, kinds, fallbackIndex = 0) {
-  return layers.find((layer) => kinds.includes(layer.kind)) || layers[fallbackIndex] || null;
+function isCornTool(tool) {
+  const name = String(tool?.Name || tool?.name || "");
+  const type = String(tool?.Type || tool?.type || "");
+  return /corn/i.test(name) || /corn/i.test(type);
+}
+
+function cornTools(tools) {
+  return (tools || []).filter(isCornTool);
+}
+
+function toolDiameter(tool) {
+  const n = Number(tool?.["Diameter(D)"] ?? tool?.["Tip Diameter(F)"] ?? 0);
+  return Number.isFinite(n) ? n : 0;
 }
 
 export function defaultDrillTool(diameter, tools) {
-  const candidates = (tools || [])
-    .map((tool) => ({ number: toolNumber(tool), tip: toolTip(tool) }))
+  const candidates = cornTools(tools)
+    .map((tool) => ({ number: toolNumber(tool), tip: toolTip(tool), diameter: toolDiameter(tool) }))
     .filter((row) => Number.isFinite(row.number) && row.number >= 1 && row.tip > 0);
   if (!candidates.length) return 4;
   candidates.sort(
@@ -79,10 +96,55 @@ function toolSelectHtml(tools, selected) {
     .join("");
 }
 
-function layerSelectHtml(layers, selectedName) {
+function copperLayerLabel(layer) {
+  if (layer.kind === "copper_top") return `Top · ${layer.name}`;
+  if (layer.kind === "copper_bottom") return `Bottom · ${layer.name}`;
+  return `${layer.name} · ${layer.kind}`;
+}
+
+function profileLayerLabel(layer) {
+  return `Profile · ${layer.name}`;
+}
+
+function layerSelectHtml(layers, selectedName, labelFn) {
   return layers
-    .map((layer) => optionHtml(layer.name, `${layer.name} · ${layer.kind}`, layer.name === selectedName))
+    .map((layer) => {
+      const sel = layer.name === selectedName ? " selected" : "";
+      const label = labelFn ? labelFn(layer) : `${layer.name} · ${layer.kind}`;
+      return `<option value="${escapeAttr(layer.name)}" data-kind="${escapeAttr(layer.kind)}"${sel}>${escapeHtml(
+        label
+      )}</option>`;
+    })
     .join("");
+}
+
+export function fillBoardSettingTools(tools) {
+  const copperSel = document.getElementById("copper_tool_number");
+  if (copperSel) {
+    const current = Number(copperSel.value);
+    const selected = Number.isFinite(current) && current >= 1 ? current : 2;
+    fillSelect(copperSel, toolSelectHtml(tools, selected));
+  }
+  const outlineSel = document.getElementById("outline_tool_number");
+  if (outlineSel) {
+    const current = Number(outlineSel.value);
+    const selected = Number.isFinite(current) && current >= 1 ? current : 4;
+    fillSelect(outlineSel, toolSelectHtml(cornTools(tools), selected));
+  }
+}
+
+function copperLayerIsBottom(select) {
+  const opt = select?.selectedOptions?.[0];
+  return (opt?.dataset?.kind || "") === "copper_bottom";
+}
+
+function syncMirrorToCopperLayer(root, select = root.querySelector(".gen-copper-layer")) {
+  const mirror = root.querySelector("#gen-mirror");
+  if (!mirror || !select) return false;
+  const wantOn = copperLayerIsBottom(select);
+  if (mirror.checked === wantOn) return false;
+  mirror.checked = wantOn;
+  return true;
 }
 
 function sizesFromLayers(layers, selectedNames) {
@@ -146,8 +208,12 @@ function renderSizeRows(block, sizes, tools, previous) {
   for (const size of sizes) {
     const key = size.diameter.toFixed(3);
     const prev = previous.get(key);
-    const chosen =
-      (prev && typeof prev === "object" ? prev.tool : prev) || defaultDrillTool(size.diameter, tools);
+    const corns = cornTools(tools);
+    const chosenRaw =
+      (prev && typeof prev === "object" ? prev.tool : prev) || defaultDrillTool(size.diameter, corns);
+    const chosen = corns.some((tool) => toolNumber(tool) === Number(chosenRaw))
+      ? Number(chosenRaw)
+      : defaultDrillTool(size.diameter, corns);
     const strategy =
       prev && typeof prev === "object" && prev.strategy
         ? prev.strategy
@@ -161,7 +227,7 @@ function renderSizeRows(block, sizes, tools, previous) {
       <td>
         <div class="gen-size-tool-cell">
           <span class="gen-tool-swatch" aria-hidden="true"></span>
-          <select class="gen-size-tool">${toolSelectHtml(tools, chosen)}</select>
+          <select class="gen-size-tool">${toolSelectHtml(corns, chosen)}</select>
         </div>
       </td>
       <td>
@@ -187,7 +253,7 @@ function renderSizeRows(block, sizes, tools, previous) {
       swatch.style.background = drillToolColor(select.value);
     };
     const syncStrategy = () => {
-      const next = defaultHoleStrategy(size.diameter, Number(select.value), tools);
+      const next = defaultHoleStrategy(size.diameter, Number(select.value), corns);
       const radio = tr.querySelector(`.gen-size-strategy[value="${next}"]`);
       if (radio) radio.checked = true;
     };
@@ -205,12 +271,12 @@ function refreshDrillSizes(block, preview, tools) {
   renderSizeRows(block, sizes, tools, existingSizeState(block));
 }
 
-function drillDepthMm(card, fallback = 1.6) {
-  const n = Number(card.querySelector(".gen-drill-depth")?.value);
+function drillDepthMm(root, fallback = 1.7) {
+  const n = Number(root?._previewCtx?.getSettings?.()?.drill_depth_mm);
   return Number.isFinite(n) && n > 0 ? Math.min(20, n) : fallback;
 }
 
-function renderDrillBlock(preview, tools, { depthMm = 1.6 } = {}) {
+function renderDrillBlock(preview) {
   const drills = drillLayers(preview);
   const section = document.createElement("section");
   section.className = "gen-card gen-drill";
@@ -240,11 +306,7 @@ function renderDrillBlock(preview, tools, { depthMm = 1.6 } = {}) {
         <button type="button" class="gen-preview-btn" data-op="drill" aria-pressed="false">Preview</button>
       </div>
     </div>
-    <p class="gen-hint">Choose one or more drill files, then assign a tool and strategy to each hole size. Pocket mills concentric circles when the hole is larger than the tool, stepping down by that tool’s Step Down. Preview colours match the tool.</p>
-    <div class="field">
-      <label>Drill depth (mm)</label>
-      <input class="gen-drill-depth" type="number" min="0.01" max="20" step="0.01" value="${Number(depthMm) || 1.6}" />
-    </div>
+    <p class="gen-hint">Choose drill files, then a Corn mill and strategy for each hole size. Only Corn tools are listed. Drilling and cutout depth is in Board setting. Pocket mills concentric circles when the hole is larger than the tool.</p>
     <div class="gen-checks">${checks || '<p class="gen-hint">No drill files in this zip.</p>'}</div>
     <div class="gen-size-wrap">
       <table class="gen-size-table">
@@ -260,93 +322,93 @@ function renderDrillBlock(preview, tools, { depthMm = 1.6 } = {}) {
 }
 
 function copperMode(card) {
-  return card.querySelector(".gen-copper-mode:checked")?.value === "pocket"
-    ? "pocket"
-    : "contour";
+  return card?.querySelector(".gen-copper-mode:checked")?.value === "pocket" ? "pocket" : "contour";
 }
 
 function copperPasses(card) {
-  const passes = Number(card.querySelector(".gen-copper-passes")?.value);
+  const passes = Number(card?.querySelector(".gen-copper-passes")?.value);
   return Number.isFinite(passes) && passes >= 1 ? Math.min(12, Math.round(passes)) : 1;
 }
 
-function copperDepthMm(card) {
-  const n = Number(card.querySelector(".gen-copper-depth")?.value);
-  return Number.isFinite(n) && n > 0 ? Math.min(5, n) : 0.15;
-}
-
-function profileOption(selectEl, copperName) {
-  if (!selectEl?.options?.length) return null;
-  const profileOpt = [...selectEl.options].find((opt) =>
-    /·\s*profile\s*$/i.test(opt.textContent || "")
-  );
-  if (profileOpt && profileOpt.value !== copperName) return profileOpt;
-  return (
-    [...selectEl.options].find((opt) => opt.value && opt.value !== copperName) ||
-    profileOpt ||
-    null
-  );
-}
-
-function copperPlanFields(card, root) {
-  if (!card || card.hidden) return null;
-  const layer = card.querySelector(".gen-copper-layer")?.value;
-  const tool = Number(card.querySelector(".gen-copper-tool")?.value);
-  const mode = copperMode(card);
-  const outlineSelect = card.querySelector(".gen-copper-outline");
-  const picked = profileOption(outlineSelect, layer);
-  const outlineLayer =
-    (picked && picked.value) ||
-    outlineSelect?.value ||
-    root.querySelector("#gen-outline-layer")?.value ||
-    null;
-  if (!layer) return null;
-  return {
-    layer,
-    tool_number: Number.isFinite(tool) ? tool : 2,
-    isolation_passes: copperPasses(card),
-    engrave_mode: mode,
-    outline_layer: mode === "pocket" && outlineLayer !== layer ? outlineLayer : null,
-    depth_mm: copperDepthMm(card),
-  };
-}
-
-function syncPocketOutline(card) {
-  const copper = card.querySelector(".gen-copper-layer");
-  const outline = card.querySelector(".gen-copper-outline");
-  const pick = profileOption(outline, copper?.value);
-  if (pick) outline.value = pick.value;
-}
-
 function syncCopperModeUi(card) {
+  if (!card) return;
   const mode = copperMode(card);
   const passesWrap = card.querySelector(".gen-copper-passes-wrap");
-  const outlineWrap = card.querySelector(".gen-copper-outline-wrap");
   const hint = card.querySelector(".gen-copper-hint");
   if (passesWrap) passesWrap.hidden = mode === "pocket";
-  if (outlineWrap) outlineWrap.hidden = mode !== "pocket";
   if (hint) {
     hint.textContent =
       mode === "pocket"
-        ? "Clear unused copper inside the selected board outline, leaving traces. Step-over comes from the selected tool’s PCB row."
-        : "Contour isolation around copper. Extra passes step farther out using the tool’s step-over.";
+        ? "Clear unused copper inside the board outline, leaving traces. Tool and engraving depth are in Board setting."
+        : "Contour isolation around copper. Extra passes step farther out using the tool’s step-over. Tool and engraving depth are in Board setting.";
   }
 }
 
-function fillCopperCard(card, gerbers, tools, layerName, outlineName, settings) {
+function copperDepthMm(settings) {
+  const n = Number(settings?.engraving_depth_mm);
+  return Number.isFinite(n) && n > 0 ? Math.min(5, n) : 0.2;
+}
+
+function copperToolNumber(settings) {
+  const n = Number(settings?.copper_tool_number);
+  return Number.isFinite(n) && n >= 1 ? n : 2;
+}
+
+function copperPlanFields(card, settings) {
+  if (!card || card.hidden) return null;
+  const layer = card.querySelector(".gen-copper-layer")?.value;
+  if (!layer) return null;
+  const mode = copperMode(card);
+  const outlineLayer = card.closest("#panel-generate-wrap")?.querySelector("#gen-outline-layer")?.value;
+  return {
+    layer,
+    tool_number: copperToolNumber(settings),
+    isolation_passes: copperPasses(card),
+    engrave_mode: mode,
+    outline_layer: mode === "pocket" && outlineLayer && outlineLayer !== layer ? outlineLayer : null,
+    depth_mm: copperDepthMm(settings),
+  };
+}
+
+function fillCopperCard(card, coppers, layerName) {
   if (!card) return;
-  fillSelect(card.querySelector(".gen-copper-layer"), layerSelectHtml(gerbers, layerName));
-  fillSelect(card.querySelector(".gen-copper-tool"), toolSelectHtml(tools, 2));
-  fillSelect(card.querySelector(".gen-copper-outline"), layerSelectHtml(gerbers, outlineName));
-  const copperDepth = card.querySelector(".gen-copper-depth");
-  if (copperDepth) {
-    const fromSettings = Number(settings?.engraving_depth_mm);
-    if (Number.isFinite(fromSettings) && fromSettings > 0) {
-      copperDepth.value = String(fromSettings);
-    }
-  }
+  fillSelect(card.querySelector(".gen-copper-layer"), layerSelectHtml(coppers, layerName, copperLayerLabel));
   syncCopperModeUi(card);
-  syncPocketOutline(card);
+}
+
+function planSettings(root) {
+  return root?._previewCtx?.getSettings?.() || {};
+}
+
+function largestSelectedCorn(card, tools) {
+  const selected = new Set(
+    [...(card?.querySelectorAll("select.gen-size-tool") || [])].map((el) => Number(el.value))
+  );
+  const chosen = cornTools(tools).filter((tool) => selected.has(toolNumber(tool)));
+  if (chosen.length) {
+    return [...chosen].sort(
+      (a, b) => toolDiameter(b) - toolDiameter(a) || toolNumber(a) - toolNumber(b)
+    )[0];
+  }
+  return cornTools(tools).find((tool) => toolNumber(tool) === 4) || cornTools(tools)[0] || null;
+}
+
+function syncOutlineFromDrills(root) {
+  const tools = root.querySelector("#gen-drills")?._tools || [];
+  const drillCard = root.querySelector(".gen-drill");
+  const tool = largestSelectedCorn(drillCard, tools);
+  const n = toolNumber(tool);
+  const hidden = root.querySelector("#gen-outline-tool");
+  if (hidden && Number.isFinite(n)) hidden.value = String(n);
+  const outlineSel = document.getElementById("outline_tool_number");
+  if (outlineSel && Number.isFinite(n)) outlineSel.value = String(n);
+  const hint = root.querySelector("#gen-outline-tool-hint");
+  if (hint) {
+    hint.textContent = Number.isFinite(n)
+      ? `Cut uses ${toolLabel(tool)} — the largest Corn mill selected for drilling.`
+      : "Cut uses a Corn mill from drilling. Select a drill tool first.";
+  }
+  return Number.isFinite(n) ? n : 4;
 }
 
 function planMirror(root) {
@@ -359,8 +421,9 @@ function withMirror(plan, root) {
 }
 
 function planForCard(root, kind, card) {
+  const settings = planSettings(root);
   if (kind === "copper") {
-    const copper = copperPlanFields(card, root);
+    const copper = copperPlanFields(card, settings);
     if (!copper) return null;
     return withMirror({ copper, drills: [], outline: null }, root);
   }
@@ -369,50 +432,30 @@ function planForCard(root, kind, card) {
     if (!layers.length) return null;
     const size_map = sizeMapFromCard(card);
     return withMirror(
-      { copper: null, drills: [{ layers, size_map, depth_mm: drillDepthMm(card) }], outline: null },
+      { copper: null, drills: [{ layers, size_map, depth_mm: drillDepthMm(root) }], outline: null },
       root
     );
   }
   if (kind === "outline") {
-    const outline = outlinePlanFields(root);
+    const outline = outlinePlanFields(root, settings);
     if (!outline) return null;
     return withMirror({ copper: null, drills: [], outline }, root);
   }
   return null;
 }
 
-function outlineDepthMm(root) {
-  const n = Number(root.querySelector("#gen-outline-depth")?.value);
-  return Number.isFinite(n) && n > 0 ? Math.min(20, n) : 1.6;
+function outlineDepthMm(settings) {
+  const n = Number(settings?.drill_depth_mm ?? settings?.outline_depth_mm);
+  return Number.isFinite(n) && n > 0 ? Math.min(20, n) : 1.7;
 }
 
-function wrapOffset(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 0;
-  return ((n % 1) + 1) % 1;
+function tabOffsetFromRoot(_root) {
+  return 0;
 }
 
-function tabOffsetFromRoot(root) {
-  return wrapOffset(root.querySelector("#gen-tab-offset")?.value);
-}
-
-function setTabOffsetUi(root, offset) {
-  const wrapped = wrapOffset(offset);
-  const el = root.querySelector("#gen-tab-offset");
-  const out = root.querySelector("#gen-tab-offset-readout");
-  if (el) el.value = String(wrapped);
-  if (out) out.textContent = `${Math.round(wrapped * 100)}%`;
-}
-
-function syncTabOffsetVisibility(root) {
-  const wrap = root.querySelector("#gen-tab-offset-wrap");
-  const count = Number(root.querySelector("#gen-tab-count")?.value);
-  if (wrap) wrap.hidden = !(count > 0);
-}
-
-function outlinePlanFields(root) {
+function outlinePlanFields(root, settings) {
   const layer = root.querySelector("#gen-outline-layer")?.value;
-  const tool = Number(root.querySelector("#gen-outline-tool")?.value);
+  const tool = Number(root.querySelector("#gen-outline-tool")?.value) || syncOutlineFromDrills(root);
   const tabCount = Number(root.querySelector("#gen-tab-count")?.value);
   const tabWidth = Number(root.querySelector("#gen-tab-width")?.value);
   if (!layer) return null;
@@ -422,7 +465,7 @@ function outlinePlanFields(root) {
     tab_count: Number.isFinite(tabCount) ? tabCount : 4,
     tab_width_mm: Number.isFinite(tabWidth) ? tabWidth : 2,
     tab_offset: tabOffsetFromRoot(root),
-    depth_mm: outlineDepthMm(root),
+    depth_mm: outlineDepthMm(settings || planSettings(root)),
   };
 }
 
@@ -436,7 +479,48 @@ function setPreviewPressed(btn, card, on) {
   card?.classList.toggle("is-previewing", on);
 }
 
-async function showCardPreview(root, btn) {
+function previewProgressLabel(kind) {
+  if (kind === "copper") return "Building copper engraving path…";
+  if (kind === "drill") return "Building drill path…";
+  if (kind === "outline") return "Building outline path…";
+  return "Building CNC path preview…";
+}
+
+function stopPathPulse(root) {
+  if (root._pathPulseId) {
+    window.clearInterval(root._pathPulseId);
+    root._pathPulseId = 0;
+  }
+}
+
+function pulsePathProgress(root, ctx, from, to, label, meta) {
+  stopPathPulse(root);
+  if (!ctx.setProgress) return () => {};
+  let pct = from;
+  ctx.setProgress(true, pct, label, meta || `${Math.round(pct)}%`);
+  const cap = Math.max(from, to - 3);
+  root._pathPulseId = window.setInterval(() => {
+    if (pct >= cap) return;
+    pct = Math.min(cap, pct + Math.max(1.2, (cap - pct) * 0.1));
+    ctx.setProgress(true, pct, label, meta || `${Math.round(pct)}%`);
+  }, 180);
+  return (finalPct = to, finalLabel = label) => {
+    stopPathPulse(root);
+    ctx.setProgress?.(true, finalPct, finalLabel, meta || `${Math.round(finalPct)}%`);
+  };
+}
+
+function finishPathProgress(ctx, ok, label = "CNC paths previewed") {
+  if (!ctx.setProgress) return;
+  if (ok) {
+    ctx.setProgress(true, 100, label, "100%");
+    ctx.hideProgressSoon?.(600);
+  } else {
+    ctx.setProgress(false);
+  }
+}
+
+async function showCardPreview(root, btn, { trackProgress = true } = {}) {
   const card = btn.closest(".gen-card");
   const ctx = root._previewCtx || {};
   const kind = btn.dataset.op;
@@ -457,19 +541,26 @@ async function showCardPreview(root, btn) {
         : "Choose a layer to preview.",
       "error"
     );
+    if (trackProgress) finishPathProgress(ctx, false);
     return;
   }
   btn.disabled = true;
-  ctx.setStatus?.("Building CNC path preview…");
+  const label = previewProgressLabel(kind);
+  ctx.setStatus?.(label);
+  const stop = trackProgress ? pulsePathProgress(root, ctx, 8, 100, label) : null;
   try {
     const result = await previewPath(jobId, settings, plan);
     setPreviewPressed(btn, card, true);
     ctx.onPathPreview?.(result, key, true);
     ctx.setStatus?.(result.message || "Path preview on", "ok");
+    stop?.(100, label);
+    if (trackProgress) finishPathProgress(ctx, true, result.message || "Path preview on");
   } catch (err) {
     setPreviewPressed(btn, card, false);
     ctx.onPathPreview?.({ paths: [] }, key, false);
     ctx.setStatus?.(err.message || String(err), "error");
+    stop?.(0, label);
+    if (trackProgress) finishPathProgress(ctx, false);
   } finally {
     btn.disabled = false;
   }
@@ -482,6 +573,34 @@ function hideCardPreview(root, btn) {
   setPreviewPressed(btn, card, false);
   ctx.onPathPreview?.({ paths: [] }, key, false);
   ctx.setStatus?.("Path preview off", "ok");
+}
+
+async function runPreviewBatch(root, buttons) {
+  const ctx = root._previewCtx || {};
+  const n = buttons.length;
+  if (!n) return;
+  let failed = false;
+  for (let i = 0; i < n; i++) {
+    const from = (i / n) * 100;
+    const to = ((i + 1) / n) * 100;
+    const kind = buttons[i].dataset.op;
+    const label = `${previewProgressLabel(kind)} (${i + 1}/${n})`;
+    const stop = pulsePathProgress(root, ctx, from, to, label);
+    await showCardPreview(root, buttons[i], { trackProgress: false });
+    const on = buttons[i].getAttribute("aria-pressed") === "true";
+    if (!on) failed = true;
+    stop(to, label);
+  }
+  if (failed) finishPathProgress(ctx, false);
+  else {
+    ctx.setStatus?.("CNC paths previewed. Press Next step · Convert when ready.", "ok");
+    finishPathProgress(ctx, true, "CNC paths previewed");
+  }
+}
+
+function refreshActivePreviews(root) {
+  const active = [...root.querySelectorAll('.gen-preview-btn[aria-pressed="true"]')];
+  return runPreviewBatch(root, active);
 }
 
 function bindPreviewClicks(root) {
@@ -498,87 +617,94 @@ function bindPreviewClicks(root) {
   root.addEventListener("change", (event) => {
     if (event.target?.id === "gen-mirror") {
       root._previewCtx?.onMirrorChange?.(event.target.checked);
-      const active = [...root.querySelectorAll('.gen-preview-btn[aria-pressed="true"]')];
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        active.forEach((btn) => showCardPreview(root, btn));
+        void refreshActivePreviews(root);
       }, 250);
       return;
     }
+    if (event.target?.classList.contains("gen-copper-mode")) {
+      syncCopperModeUi(event.target.closest(".gen-copper"));
+    }
+    if (event.target?.classList.contains("gen-copper-layer")) {
+      root._previewCtx?.onSelectLayer?.(event.target.value);
+      if (syncMirrorToCopperLayer(root, event.target)) {
+        const mirrorOn = !!root.querySelector("#gen-mirror")?.checked;
+        root._previewCtx?.onMirrorChange?.(mirrorOn);
+        window.clearTimeout(refreshTimer);
+        refreshTimer = window.setTimeout(() => {
+          void refreshActivePreviews(root);
+        }, 250);
+        return;
+      }
+    }
+    if (event.target?.classList.contains("gen-size-tool")) {
+      syncOutlineFromDrills(root);
+    }
     const card = event.target.closest(".gen-card");
     const btn = card?.querySelector(".gen-preview-btn");
-    if (!btn || btn.getAttribute("aria-pressed") !== "true") return;
+    if (!btn || btn.getAttribute("aria-pressed") !== "true") {
+      if (event.target?.classList.contains("gen-size-tool")) {
+        const outlineBtn = root.querySelector('.gen-outline .gen-preview-btn[aria-pressed="true"]');
+        if (outlineBtn) {
+          window.clearTimeout(refreshTimer);
+          refreshTimer = window.setTimeout(() => showCardPreview(root, outlineBtn), 250);
+        }
+      }
+      return;
+    }
     window.clearTimeout(refreshTimer);
-    refreshTimer = window.setTimeout(() => showCardPreview(root, btn), 250);
+    refreshTimer = window.setTimeout(() => {
+      if (event.target?.classList.contains("gen-size-tool")) {
+        const outlineBtn = root.querySelector(".gen-outline .gen-preview-btn");
+        const btns = [btn];
+        if (outlineBtn?.getAttribute("aria-pressed") === "true" && outlineBtn !== btn) {
+          btns.push(outlineBtn);
+        }
+        void runPreviewBatch(root, btns);
+        return;
+      }
+      showCardPreview(root, btn);
+    }, 250);
   });
 }
 
-export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, onPathPreview, onSelectLayer, onMirrorChange } = {}) {
+export async function autoPreviewAll(root) {
+  const buttons = [...root.querySelectorAll(".gen-preview-btn")];
+  await runPreviewBatch(root, buttons);
+}
+
+export function mountGenerateForm(root, { preview, tools, getJobId, getSettings, setStatus, setProgress, hideProgressSoon, onPathPreview, onSelectLayer, onMirrorChange } = {}) {
   if (!root) return;
   const copperCard = root.querySelector(".gen-copper-top") || root.querySelector(".gen-copper");
   const outlineLayer = root.querySelector("#gen-outline-layer");
-  const outlineTool = root.querySelector("#gen-outline-tool");
   const drillsHost = root.querySelector("#gen-drills");
 
-  const gerbers = gerberLayers(preview);
-  const copperDefault = defaultLayer(gerbers, ["copper_top", "copper_bottom"], 0);
-  const outlineDefault = defaultLayer(gerbers, ["profile"], gerbers.length ? gerbers.length - 1 : 0);
+  const coppers = copperChoiceLayers(preview);
+  const copperDefault =
+    coppers.find((layer) => layer.kind === "copper_top") ||
+    coppers.find((layer) => layer.kind === "copper_bottom") ||
+    coppers[0] ||
+    null;
+  const profiles = profileChoiceLayers(preview);
+  const outlineDefault = profiles[0] || null;
 
-  root._previewCtx = { getJobId, getSettings, setStatus, onPathPreview, onSelectLayer, onMirrorChange };
+  root._previewCtx = { getJobId, getSettings, setStatus, setProgress, hideProgressSoon, onPathPreview, onSelectLayer, onMirrorChange };
   bindPreviewClicks(root);
   root.querySelectorAll(".gen-preview-btn").forEach((btn) => {
     setPreviewPressed(btn, btn.closest(".gen-card"), false);
   });
 
-  const settings = getSettings?.() || {};
-  fillCopperCard(copperCard, gerbers, tools, copperDefault?.name, outlineDefault?.name, settings);
+  fillBoardSettingTools(tools);
+  fillCopperCard(copperCard, coppers, copperDefault?.name);
+  syncMirrorToCopperLayer(root, copperCard?.querySelector(".gen-copper-layer"));
   onSelectLayer?.(copperCard?.querySelector(".gen-copper-layer")?.value);
   onMirrorChange?.(planMirror(root));
-  fillSelect(outlineLayer, layerSelectHtml(gerbers, outlineDefault?.name));
-  fillSelect(outlineTool, toolSelectHtml(tools, 4));
-  const outlineDepth = root.querySelector("#gen-outline-depth");
-  if (outlineDepth) {
-    const fromSettings = Number(settings.drill_depth_mm);
-    if (Number.isFinite(fromSettings) && fromSettings > 0) {
-      outlineDepth.value = String(fromSettings);
-    }
-  }
-  syncTabOffsetVisibility(root);
-  setTabOffsetUi(root, tabOffsetFromRoot(root));
-  if (!root.dataset.copperModeBound) {
-    root.dataset.copperModeBound = "1";
-    root.addEventListener("change", (event) => {
-      const card = event.target?.closest(".gen-copper");
-      if (!card) return;
-      if (event.target?.classList.contains("gen-copper-mode")) syncCopperModeUi(card);
-      if (
-        event.target?.classList.contains("gen-copper-layer") ||
-        event.target?.classList.contains("gen-copper-mode")
-      ) {
-        syncPocketOutline(card);
-      }
-      if (event.target?.classList.contains("gen-copper-layer")) {
-        root._previewCtx?.onSelectLayer?.(event.target.value);
-      }
-    });
-  }
-  if (!root.dataset.tabOffsetBound) {
-    root.dataset.tabOffsetBound = "1";
-    root.addEventListener("input", (event) => {
-      const id = event.target?.id;
-      if (id === "gen-tab-offset") {
-        setTabOffsetUi(root, tabOffsetFromRoot(root));
-      }
-      if (id === "gen-tab-count") {
-        syncTabOffsetVisibility(root);
-      }
-    });
-  }
+  fillSelect(outlineLayer, layerSelectHtml(profiles, outlineDefault?.name, profileLayerLabel));
 
   if (drillsHost) {
     drillsHost.innerHTML = "";
-    const depthMm = getSettings?.()?.drill_depth_mm ?? 1.6;
-    const first = renderDrillBlock(preview, tools, { depthMm });
+    const first = renderDrillBlock(preview);
     drillsHost.append(first);
     refreshDrillSizes(first, preview, tools);
     drillsHost._preview = preview;
@@ -592,26 +718,31 @@ export function mountGenerateForm(root, { preview, tools, getJobId, getSettings,
             drillsHost._preview,
             drillsHost._tools
           );
+          syncOutlineFromDrills(root);
         }
       });
     }
   }
+  syncOutlineFromDrills(root);
+
+  void autoPreviewAll(root);
 }
 
 export function readGeneratePlan(root) {
-  const copper = copperPlanFields(root.querySelector(".gen-copper"), root);
+  const settings = planSettings(root);
+  const copper = copperPlanFields(root.querySelector(".gen-copper"), settings);
   const outlineLayer = root.querySelector("#gen-outline-layer")?.value;
 
   const drills = [...root.querySelectorAll(".gen-drill")].map((block) => {
     const layers = [...selectedNames(block)];
     const size_map = sizeMapFromCard(block);
-    return { layers, size_map, depth_mm: drillDepthMm(block) };
+    return { layers, size_map, depth_mm: drillDepthMm(root) };
   }).filter((op) => op.layers.length);
 
   return {
     copper,
     drills,
-    outline: outlineLayer ? outlinePlanFields(root) : null,
+    outline: outlineLayer ? outlinePlanFields(root, settings) : null,
     mirror: planMirror(root),
   };
 }

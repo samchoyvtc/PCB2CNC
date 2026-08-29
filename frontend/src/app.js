@@ -1,6 +1,6 @@
 import { setupDropzone, uploadZip } from "./upload.js";
 import { BoardPreview, renderLayerToggles, syncLayerToggleChecks } from "./preview.js";
-import { readSettings } from "./settings.js";
+import { readSettings, restoreSettingsForm, settingsFormChanged, snapshotSettingsForm } from "./settings.js";
 import { fetchNcText, generateJob, parseNcJobSequence, renderDownloads, renderJobSequence, sortNcNames } from "./output.js";
 import {
   getSelectedToolNumber,
@@ -8,7 +8,7 @@ import {
   loadMachineTools,
   uploadMachineTools,
 } from "./tools.js";
-import { mountGenerateForm, readGeneratePlan } from "./generate.js";
+import { autoPreviewAll, fillBoardSettingTools, mountGenerateForm, readGeneratePlan } from "./generate.js";
 
 const statusEl = document.getElementById("status");
 const fileListEl = document.getElementById("file-list");
@@ -51,11 +51,13 @@ const pills = {
 };
 
 const NEXT_LABELS = {
-  1: "Next step · Machine",
-  2: "Next step · Generate",
+  1: "Next step · Convert",
+  2: "Next step · Convert",
   3: "Next step · Convert",
   4: "Download",
 };
+
+const PATH_HEADING = "CNC path · copper + drill + outline";
 
 let jobId = null;
 let currentStage = 1;
@@ -65,6 +67,7 @@ let lastPreview = null;
 let generateMountedFor = null;
 let lastConvert = null;
 let inspectMode = "jobs";
+let settingsSnapshot = null;
 const board = new BoardPreview(document.getElementById("board-canvas"));
 
 function setStatus(message, kind = "") {
@@ -85,6 +88,12 @@ function updateNextButton() {
     btnNext.disabled = !jobId || busy || !lastConvert;
     return;
   }
+  const onMachine = panelMachineWrap && !panelMachineWrap.hidden;
+  if (onMachine) {
+    btnNext.textContent = "Next step · Convert";
+    btnNext.disabled = true;
+    return;
+  }
   btnNext.textContent = NEXT_LABELS[currentStage] || "Next step";
   btnNext.disabled = !jobId || busy || currentStage >= 4;
 }
@@ -94,7 +103,13 @@ function setResetEnabled(enabled) {
   btnResetHeader.disabled = !enabled;
 }
 
+let progressHideTimer = 0;
+
 function setProgress(visible, percent = 0, label = "", meta = "") {
+  if (progressHideTimer) {
+    window.clearTimeout(progressHideTimer);
+    progressHideTimer = 0;
+  }
   progressWrap.hidden = !visible;
   const pct = Math.max(0, Math.min(100, Math.round(percent)));
   progressFill.style.width = `${pct}%`;
@@ -103,7 +118,16 @@ function setProgress(visible, percent = 0, label = "", meta = "") {
   progressMeta.textContent = meta || `${pct}%`;
 }
 
+function hideProgressSoon(ms = 600) {
+  window.clearTimeout(progressHideTimer);
+  progressHideTimer = window.setTimeout(() => {
+    progressHideTimer = 0;
+    setProgress(false);
+  }, ms);
+}
+
 function resetJob() {
+  restoreSettingsForm(settingsForm, settingsSnapshot);
   jobId = null;
   currentStage = 1;
   busy = false;
@@ -119,7 +143,8 @@ function resetJob() {
   setResetEnabled(false);
   setProgress(false);
   setStage(1);
-  showPanel("layers");
+  showPanel("generate");
+  setPreviewHeading(PATH_HEADING);
   setStatus("Ready for a new zip…");
 }
 
@@ -137,7 +162,7 @@ function previewTitle(kind) {
   if (kind === "copper") return "CNC path · Copper engraving";
   if (kind === "drill") return "CNC path · Drilling";
   if (kind === "outline") return "CNC path · Board outline";
-  return "Board preview";
+  return PATH_HEADING;
 }
 
 function overlayLabel(key) {
@@ -159,9 +184,9 @@ function showPanel(tab) {
   document.body.classList.toggle("view-convert", isConvert);
   document.body.classList.toggle("view-preview", !isMachine);
 
-  panelInput.hidden = isMachine || isGenerate || isConvert;
+  panelInput.hidden = isMachine || isConvert;
   panelPreview.hidden = isMachine;
-  panelLayers.hidden = isMachine || isGenerate || isConvert;
+  panelLayers.hidden = true;
   panelMachineWrap.hidden = !isMachine;
   panelMachine.hidden = !isMachine;
   if (panelGenerateWrap) panelGenerateWrap.hidden = !isGenerate;
@@ -172,7 +197,7 @@ function showPanel(tab) {
     board.setToolpaths([]);
     board.setMirrorX(false);
     if (panelGenerateWrap) panelGenerateWrap._overlays = {};
-    setPreviewHeading("Board preview");
+    setPreviewHeading(PATH_HEADING);
   }
   if (isConvert) {
     board.setMirrorX(!!panelGenerateWrap?.querySelector("#gen-mirror")?.checked);
@@ -183,11 +208,12 @@ function showPanel(tab) {
   }
   if (isGenerate) {
     refreshGenerateForm();
+    paintGenerateOverlays();
   }
   if (!isMachine) {
     requestAnimationFrame(() => {
       board.resize();
-      if (isGenerate || isConvert || tab === "layers") board.fit();
+      if (isGenerate || isConvert) board.fit();
     });
   }
   updateNextButton();
@@ -203,6 +229,7 @@ async function ensureToolsLoaded() {
       setStatus,
     });
     toolsLoaded = true;
+    fillBoardSettingTools(listMachineTools());
   } catch (err) {
     console.error(err);
     toolsMeta.textContent = err.message || String(err);
@@ -213,30 +240,50 @@ async function ensureToolsLoaded() {
 }
 
 function goPreview() {
-  if (!jobId) {
-    setStatus("Upload a Gerber zip to start Stage 1 Preview", "error");
-    return;
+  if (panelMachineWrap && !panelMachineWrap.hidden) {
+    restoreSettingsForm(settingsForm, settingsSnapshot);
   }
-  showPanel("layers");
-  if (currentStage < 2) setStage(1);
+  showPanel("generate");
+  if (jobId && lastPreview) setStage(3);
 }
 
-function goMachine() {
+async function goMachine() {
   if (!jobId) {
-    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    setStatus("Upload a Gerber zip first", "error");
     return;
   }
+  await ensureToolsLoaded();
+  settingsSnapshot = snapshotSettingsForm(settingsForm);
   showPanel("machine");
-  if (currentStage < 3) setStage(2);
+  setStatus("Change Board setting, then Apply or Cancel.");
+}
+
+function applyBoardSettings() {
+  const next = snapshotSettingsForm(settingsForm);
+  const changed = settingsFormChanged(settingsSnapshot, next);
+  settingsSnapshot = next;
+  showPanel("generate");
+  if (jobId && lastPreview) setStage(3);
+  if (changed && lastPreview && panelGenerateWrap) {
+    void autoPreviewAll(panelGenerateWrap);
+  }
+  setStatus(changed ? "Board setting applied." : "Board setting unchanged.", "ok");
+}
+
+function cancelBoardSettings() {
+  restoreSettingsForm(settingsForm, settingsSnapshot);
+  showPanel("generate");
+  if (jobId && lastPreview) setStage(3);
+  setStatus("Board setting discarded.");
 }
 
 function goGenerate() {
   if (!jobId) {
-    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    setStatus("Upload a Gerber zip first", "error");
     return;
   }
   if (!lastPreview) {
-    setStatus("Finish Stage 1 Preview before generating", "error");
+    setStatus("Wait for the board preview to finish", "error");
     return;
   }
   showPanel("generate");
@@ -249,6 +296,15 @@ function showSelectedGerber(name) {
   syncLayerToggleChecks(layerTogglesEl, board.visibility);
 }
 
+function paintGenerateOverlays() {
+  const overlays = panelGenerateWrap?._overlays || {};
+  const keys = Object.keys(overlays);
+  board.setToolpaths(keys.flatMap((key) => overlays[key] || []));
+  if (!keys.length) setPreviewHeading(PATH_HEADING);
+  else if (keys.length === 1) setPreviewHeading(previewTitle(keys[0].startsWith("drill") ? "drill" : keys[0]));
+  else setPreviewHeading(`CNC path · ${keys.map(overlayLabel).join(" + ")}`);
+}
+
 function generatePreviewCtx() {
   return {
     getJobId: () => jobId,
@@ -258,17 +314,15 @@ function generatePreviewCtx() {
       return settings;
     },
     setStatus,
+    setProgress,
+    hideProgressSoon,
     onSelectLayer: showSelectedGerber,
     onMirrorChange: (on) => board.setMirrorX(on),
     onPathPreview: (result, op, visible = true) => {
       if (!panelGenerateWrap._overlays) panelGenerateWrap._overlays = {};
       if (visible) panelGenerateWrap._overlays[op] = result.paths || [];
       else delete panelGenerateWrap._overlays[op];
-      const keys = Object.keys(panelGenerateWrap._overlays);
-      board.setToolpaths(keys.flatMap((key) => panelGenerateWrap._overlays[key] || []));
-      if (!keys.length) setPreviewHeading("Board preview");
-      else if (keys.length === 1) setPreviewHeading(previewTitle(keys[0].startsWith("drill") ? "drill" : keys[0]));
-      else setPreviewHeading(`CNC path · ${keys.map(overlayLabel).join(" + ")}`);
+      paintGenerateOverlays();
       requestAnimationFrame(() => {
         board.resize();
         board.draw();
@@ -278,16 +332,17 @@ function generatePreviewCtx() {
 }
 
 async function refreshGenerateForm() {
-  await ensureToolsLoaded();
   if (!lastPreview || !panelGenerateWrap) return;
+  await ensureToolsLoaded();
   const ctx = generatePreviewCtx();
   if (generateMountedFor === jobId
-      && panelGenerateWrap.querySelector(".gen-drill-depth")
-      && panelGenerateWrap.querySelector(".gen-size-strategy")
-      && panelGenerateWrap.querySelector("#gen-tab-offset")) {
+      && panelGenerateWrap.querySelector(".gen-drill")
+      && panelGenerateWrap.querySelector(".gen-copper-layer")) {
     panelGenerateWrap._previewCtx = ctx;
     ctx.onSelectLayer?.(panelGenerateWrap.querySelector(".gen-copper-layer")?.value);
     ctx.onMirrorChange?.(panelGenerateWrap.querySelector("#gen-mirror")?.checked);
+    const overlays = panelGenerateWrap._overlays || {};
+    if (!Object.keys(overlays).length) void autoPreviewAll(panelGenerateWrap);
     return;
   }
   mountGenerateForm(panelGenerateWrap, {
@@ -375,13 +430,13 @@ async function loadPreview(id) {
     setStatus(data.warnings.join(" · "), "error");
   } else {
     setStatus(
-      `Stage 1 Preview ready · ${data.layers.length} layers · ${data.drills.length} drills`,
+      `Board ready · ${data.layers.length} layers · ${data.drills.length} drills`,
       "ok"
     );
   }
-  setTimeout(() => setProgress(false), 600);
-  setStage(1);
-  showPanel("layers");
+  hideProgressSoon(600);
+  setStage(3);
+  showPanel("generate");
   busy = false;
   setResetEnabled(true);
   updateNextButton();
@@ -533,17 +588,17 @@ function applyConvertResult(result) {
 
 function goConvert() {
   if (!jobId) {
-    setStatus("Upload a Gerber zip first (Stage 1 Preview)", "error");
+    setStatus("Upload a Gerber zip first", "error");
     return;
   }
   if (!lastConvert) {
-    setStatus("Press Next step · Convert on Generate to write the .nc files", "error");
+    setStatus("Press Next step · Convert to write the .nc files", "error");
     return;
   }
   showPanel("convert");
   setStage(4);
   void inspectNc(lastConvert.selected);
-  setStatus("Stage 4 · Inspect or download converted .nc files", "ok");
+    setStatus("Stage 2 · Inspect or download converted .nc files", "ok");
   requestAnimationFrame(() => {
     board.resize();
     board.draw();
@@ -563,7 +618,7 @@ async function runGenerate() {
       setStage(3);
       return;
     }
-    setStatus("Stage 4 · Writing CNC G-code…");
+    setStatus("Writing CNC G-code…");
     busy = true;
     updateNextButton();
     setProgress(true, 25, "Writing CNC G-code…", "25%");
@@ -572,8 +627,8 @@ async function runGenerate() {
     applyConvertResult(result);
     showPanel("convert");
     setStage(4);
-    setStatus(`Stage 4 Convert ready · ${result.message}`, "ok");
-    setTimeout(() => setProgress(false), 400);
+    setStatus(`Convert ready · ${result.message}`, "ok");
+    hideProgressSoon(400);
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
@@ -598,14 +653,13 @@ async function nextStep() {
     link?.click();
     return;
   }
-  if (currentStage <= 1) {
-    goMachine();
-    setStatus("Stage 2 · Board setting, then press Next step", "ok");
+  if (panelMachineWrap && !panelMachineWrap.hidden) {
+    applyBoardSettings();
     return;
   }
-  if (currentStage === 2) {
+  if (currentStage <= 2) {
     goGenerate();
-    setStatus("Stage 3 · Choose layers and tools, then press Next step to generate", "ok");
+    setStatus("Paths previewed. Press Next step to convert.", "ok");
   }
 }
 
@@ -623,6 +677,9 @@ setupDropzone({
 
 pills[1].addEventListener("click", goPreview);
 pills[2].addEventListener("click", goMachine);
+document.getElementById("btn-open-machine")?.addEventListener("click", goMachine);
+document.getElementById("btn-settings-apply")?.addEventListener("click", applyBoardSettings);
+document.getElementById("btn-settings-cancel")?.addEventListener("click", cancelBoardSettings);
 pills[3].addEventListener("click", () => {
   if (!jobId) return;
   goGenerate();
@@ -666,11 +723,12 @@ toolsFileInput.addEventListener("change", async () => {
     });
     toolsLoaded = true;
     generateMountedFor = null;
+    fillBoardSettingTools(listMachineTools());
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), "error");
   }
 });
 
-showPanel("layers");
+showPanel("generate");
 updateNextButton();

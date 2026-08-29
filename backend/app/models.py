@@ -13,8 +13,8 @@ class MachineSettings(BaseModel):
     tool_number: int = 2
     board_width_mm: float = Field(100.0, gt=0, le=1000)
     board_length_mm: float = Field(150.0, gt=0, le=1000)
-    engraving_depth_mm: float = Field(0.15, gt=0, le=5)
-    drill_depth_mm: float = Field(1.6, gt=0, le=20)
+    engraving_depth_mm: float = Field(0.2, gt=0, le=5)
+    drill_depth_mm: float = Field(1.7, gt=0, le=20)
     spindle_rpm: int = Field(12000, ge=1000, le=60000)
     feed_mm_min: float = Field(2000, gt=0, le=10000)
     plunge_mm_min: float = Field(200, gt=0, le=3000)
