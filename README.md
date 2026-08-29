@@ -4,7 +4,7 @@
 
 Local web app that turns a PCB CAM zip (Gerber RS-274X + Excellon) into a board preview and downloadable GRBL `.nc` files.
 
-To recreate this project from a blank tree, follow **[Plan.md](Plan.md)**.
+To recreate this project from a blank tree, follow **[Plan.md](Plan.md)**. Release notes: **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## Stages
 
