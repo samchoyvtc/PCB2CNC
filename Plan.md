@@ -1,8 +1,7 @@
-# PCB Gerber-to-G-code — Student version
+# PCB Gerber-to-G-code — Student classroom app
 
-**Branch:** `student-version`  
-**Base:** `main` at 0.4.3  
-**Version:** 0.4.3-student
+**Version:** 1.0.0  
+**Release:** `main` (`v1.0.0`)
 
 This file is the rebuild spec. An agent (or developer) should be able to recreate this classroom app from a blank folder by following it. Implement behavior as written; do not add `main`-only stages or extra Generate controls.
 
@@ -59,6 +58,7 @@ flowchart LR
 PCB2CNC/
   Plan.md
   README.md
+  CHANGELOG.md
   .gitignore
   Start PCB2CNC.command
   Start PCB2CNC.bat
@@ -117,7 +117,7 @@ data/jobs/{job_id}/
 
 - **Backend:** Python 3.11+ (3.14 is acceptable), FastAPI, uvicorn, pydantic v2.
 - **Preview:** pygerber (Gerber raster), Pillow, OpenCV (`opencv-python-headless`), numpy.
-- **Frontend:** static HTML + vanilla ES modules. No bundler. Cache-bust `index.html` script as `/src/app.js?v=student-version-14` (or bump when JS changes).
+- **Frontend:** static HTML + vanilla ES modules. No bundler. Cache-bust `index.html` script as `/src/app.js?v=1.0.0` (or bump when JS changes).
 - **Optional CAM:** [pcb2gcode](https://github.com/pcb2gcode/pcb2gcode) on `PATH`. Student Convert always sends a `GeneratePlan`, so the builtin OpenCV planner is the classroom path. Without a plan, generate may use pcb2gcode then fall back to builtin.
 - **Tools:** PAEN binary `.tlslibrary`. Search order: `samples/PAEN_TOOLS.tlslibrary`, repo-root `PAEN_TOOLS.tlslibrary`, `backend/data/`, `data/`. Cutting feeds use the **PCB** material row only.
 
@@ -142,7 +142,7 @@ drawsvg>=2.4
 
 ### Chrome
 
-- Title: **Gerber CNC**. Subtitle: `Student version · Zip in → CNC paths → G-code out`.
+- Title: **Gerber CNC**. Subtitle: `v1.0.0 · Zip in → CNC paths → G-code out`.
 - Header pills: **1 Generate** (active on load) and **2 Convert**. Hidden leftover pills for Machine / extra Generate must not appear.
 - **Reset** (disabled until a job exists) and green **Next step**. On Generate the button reads **Next step · Convert**. On Convert it reads **Download** and clicks the `all.nc` download (else the first file).
 - Global status bar under the header (`Waiting for zip…`) plus a determinate progress bar for preview/generate.
@@ -222,7 +222,7 @@ After zip upload, the UI starts preview with `POST /preview/start` and polls `GE
 
 ## Backend
 
-Serve `frontend/` last with `Cache-Control: no-store`. CORS allow all (local classroom). FastAPI title `Gerber CNC GUI`, version `0.4.3-student`.
+Serve `frontend/` last with `Cache-Control: no-store`. CORS allow all (local classroom). FastAPI title `Gerber CNC GUI`, version `1.0.0`.
 
 ### API
 

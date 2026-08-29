@@ -1,6 +1,6 @@
 # Gerber CNC GUI
 
-**Version 0.4.3-student** — Classroom app: drop a CAM zip, preview CNC paths, convert to G-code.
+**Version 1.0.0** — Classroom app: drop a CAM zip, preview CNC paths, convert to G-code.
 
 Local web app that turns a PCB CAM zip (Gerber RS-274X + Excellon) into a board preview and downloadable GRBL `.nc` files.
 
